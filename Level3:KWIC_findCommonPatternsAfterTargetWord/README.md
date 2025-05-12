@@ -1,0 +1,1 @@
+Create default setting that organizes results by most frequent combination of token, POS tag and/or entity.

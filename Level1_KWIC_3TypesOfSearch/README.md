@@ -1,0 +1,1 @@
+Extend KWIC search functionality to include: three types of search - tokens, POS tags and entity. Enable user to set format of results - color scheme, window size,

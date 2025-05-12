@@ -1,0 +1,1 @@
+Create a Key word in context (KWIC) functionality to find any target n-gram. Display 5 words to the left and right of the target term.  Colorize the key word.
