@@ -109,16 +109,5 @@ def main():
         snippet = (sent[:120] + "…") if len(sent) > 120 else sent
         print(f"• '{snippet}'\n   正解: {true_label} | 予測: {pred_label}\n")
 
-    # 任意入力による対話的分類
-    while True:
-        user_txt = input("著者を推定したい文を入力してください（空行で終了）: ").strip()
-        if not user_txt:
-            break
-        vec = vectorizer.transform([user_txt])
-        guess = clf.predict(vec)[0]
-        probs = clf.predict_proba(vec)[0]
-        print(f"推定結果: {guess} (信頼度 {probs[clf.classes_.tolist().index(guess)]:.2f})\n")
-
-
 if __name__ == "__main__":
     main()
