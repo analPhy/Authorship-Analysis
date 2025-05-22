@@ -23,11 +23,11 @@ for res in ["punkt"]:
 # %% ユーティリティ関数
 
 def fetch_wikipedia_text(url: str) -> str:
-    """Wikipedia ページから本文をダウンロードし、整形して返す。"""
+    """Download and clean the main text from a Wikipedia page."""
     try:
         html = urllib.request.urlopen(url).read()
     except Exception as err:
-        sys.exit(f"URL {url} の取得中にエラーが発生しました: {err}")
+        sys.exit(f"Error fetching URL {url}: {err}")
 
     soup = BeautifulSoup(html, "html.parser")
 
@@ -44,7 +44,7 @@ def fetch_wikipedia_text(url: str) -> str:
 
 
 def build_sentence_dataset(text: str, author_label: str, min_len: int = 30):
-    """文章長が *min_len* 以上の文を抽出し、*author_label* でタグ付けして返す。"""
+    """Return a list of sentences >= *min_len* characters tagged with *author_label*."""
     sentences = sent_tokenize(text)
     filtered = [s.strip() for s in sentences if len(s.strip()) >= min_len]
     labels = [author_label] * len(filtered)
@@ -58,14 +58,14 @@ def main():
     url_a = input("Wikipedia URL for Author A: ").strip()
     url_b = input("Wikipedia URL for Author B: ").strip()
 
-    print("\nWikipedia ページをダウンロードしています…")
+    print("\nDownloading Wikipedia pages…")
     text_a = fetch_wikipedia_text(url_a)
     text_b = fetch_wikipedia_text(url_b)
 
     if not text_a or not text_b:
-        sys.exit("Wikipedia ページの取得に失敗しました。")
+        sys.exit("Failed to fetch one or both Wikipedia pages.")
 
-    print("文を分割してラベル付けしています…")
+    print("Splitting into sentences & labelling…")
     sentences_a, labels_a = build_sentence_dataset(text_a, "AuthorA")
     sentences_b, labels_b = build_sentence_dataset(text_b, "AuthorB")
 
@@ -76,7 +76,7 @@ def main():
         all_sentences, all_labels, test_size=0.2, random_state=42, stratify=all_labels
     )
 
-    print(f"学習サンプル: {len(X_train)} — テストサンプル: {len(X_test)}")
+    print(f"Training samples: {len(X_train)} — Test samples: {len(X_test)}")
 
     # TF‑IDF（1-gram と 2-gram）でベクトル化
     vectorizer = TfidfVectorizer(ngram_range=(1, 2), max_features=20_000, stop_words="english")
@@ -88,7 +88,7 @@ def main():
     clf.fit(X_train_vec, y_train)
 
     # 各著者に特徴的な単語を表示（対数確率上位 15 件）
-    print("\n=== 学習データにおける著者別特徴語・N‑gram ===")
+    print("\n=== Distinctive Words/N‑grams per Author (Training Data) ===")
     feature_names = vectorizer.get_feature_names_out()
     for idx, author in enumerate(clf.classes_):
         log_probs = clf.feature_log_prob_[idx]
@@ -99,15 +99,15 @@ def main():
     # 20 % のテストセットで評価
     preds = clf.predict(X_test_vec)
     acc = accuracy_score(y_test, preds)
-    print("\n=== テストセットでの性能 ===")
+    print("\n=== Test‑set Performance ===")
     print(f"Accuracy: {acc:.3f}")
     print(classification_report(y_test, preds, digits=3))
 
     # 予測例をいくつか表示
-    print("テスト文に対する予測例:\n")
+    print("Sample predictions on test sentences:\n")
     for sent, true_label, pred_label in zip(X_test[:10], y_test[:10], preds[:10]):
         snippet = (sent[:120] + "…") if len(sent) > 120 else sent
-        print(f"• '{snippet}'\n   正解: {true_label} | 予測: {pred_label}\n")
+        print(f"\u2022 '{snippet}'\n   True: {true_label} | Predicted: {pred_label}\n")
 
 if __name__ == "__main__":
     main()
