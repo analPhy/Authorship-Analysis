@@ -1,0 +1,1 @@
+Case study of two famous people. Source a suitable dataset. Divide the dataset into two groups -training and testing: 80/20. Identify the distinctive language of each person in the training dataset. Then, automatically identify the author of a questioned text. from the 20% test dataset. The texts can be in either Japanese or English.
