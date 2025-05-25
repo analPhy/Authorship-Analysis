@@ -2,171 +2,338 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-// Flaskからの検索結果の型定義
+// --- Phrase Search Types ---
 interface SearchResult {
-    context_words: string[]; // 前後の単語と一致した単語を含む単語リスト
-    matched_start: number; // context_words内で一致した単語が始まるインデックス
-    matched_end: number; // context_words内で一致した単語が終わる次のインデックス
+    context_words: string[];
+    matched_start: number;
+    matched_end: number;
 }
 
+interface PhraseSearchResponse {
+    results: SearchResult[];
+    error?: string;
+}
+
+// --- Authorship Analysis Types ---
+interface DistinctiveWords {
+    AuthorA: string[];
+    AuthorB: string[];
+    // Potentially other authors if the backend model changes
+    [key: string]: string[]; // Index signature for dynamic author keys
+}
+
+interface SamplePrediction {
+    sentence_snippet: string;
+    true_label: string;
+    predicted_label: string;
+}
+
+interface AuthorshipAnalysisResult {
+    accuracy: string;
+    classification_report: string;
+    distinctive_words: DistinctiveWords;
+    sample_predictions: SamplePrediction[];
+    training_samples_count: number;
+    test_samples_count: number;
+    error?: string; // For errors returned in the JSON body with a 200/400 status
+}
+
+
 const App: React.FC = () => {
+  // --- Phrase Search State ---
   const [url, setUrl] = useState('https://en.wikipedia.org/wiki/Banana');
   const [phrase, setPhrase] = useState("");
-  // 結果の型をSearch Result[]に変更
   const [results, setResults] = useState<SearchResult[]>([]);
   const [error, setError] = useState("");
   const [searchAttempted, setSearchAttempted] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // 入力フィールド変更時に関連ステートをクリアする共通関数
+  // --- Authorship Analysis State ---
+  const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Plato');
+  const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Aristotle');
+  const [authorshipResult, setAuthorshipResult] = useState<AuthorshipAnalysisResult | null>(null);
+  const [authorshipError, setAuthorshipError] = useState("");
+  const [authorshipLoading, setAuthorshipLoading] = useState(false);
+
+
   const handleInputChange = () => {
       setError("");
       setResults([]);
       setSearchAttempted(false);
-      // loadingステートは検索ボタンクリック時のみ制御
+  };
+  
+  const handleAuthorshipInputChange = () => {
+    setAuthorshipError("");
+    setAuthorshipResult(null);
   };
 
   const handleSearch = async () => {
-    // 検索前のクリアとフラグ設定
     setError("");
     setResults([]);
     setSearchAttempted(true);
     setLoading(true);
 
-    // クライアント側での基本的な入力検証
     if (!url.trim()) {
         setError("Please provide a Wikipedia URL.");
-        setSearchAttempted(false);
-        setLoading(false);
-        return;
+        setSearchAttempted(false); setLoading(false); return;
     }
-     if (!phrase.trim()) {
+    if (!phrase.trim()) {
         setError("Please provide a phrase to search.");
-        setSearchAttempted(false);
-        setLoading(false);
-        return;
+        setSearchAttempted(false); setLoading(false); return;
     }
-    // 単語数の検証もクライアント側で追加しておくとサーバー負荷を減らせる
-    if (phrase.trim().split(/\s+/).length > 2) { // \s+ で複数の空白を区切り文字とする
+    if (phrase.trim().split(/\s+/).length > 2) {
         setError("Please enter one or two words only.");
-        setSearchAttempted(false);
-        setLoading(false);
-        return;
+        setSearchAttempted(false); setLoading(false); return;
     }
-
 
     try {
-      const response = await axios.post(
+      const response = await axios.post<PhraseSearchResponse>(
         "http://localhost:5000/api/search",
         { url: url.trim(), phrase: phrase.trim() },
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-        }
+        { headers: { "Content-Type": "application/json" } }
       );
-
-      // Flaskから返されたレスポンスボディを確認 (エラーは200 OKに含まれる場合あり)
       if (response.data.error) {
         setError(response.data.error);
-        setResults([]); // エラー時は結果をクリア
+        setResults([]);
       } else {
-        // 成功時は結果を設定 (型はSearch Result[]を期待)
-        setResults(response.data.results);
-        setError(""); // 成功時はエラーをクリア
+        setResults(response.data.results || []); // Ensure results is always an array
+        setError("");
       }
-
     } catch (err: any) {
-      // ネットワークエラーやFlaskが返す500などのエラー（400はFlask側でcatchして200や400+bodyで返すようにしたのでここには来にくい）
-      console.error("Search API error:", err); // デバッグ用にエラー内容をコンソール出力
-      // エラーレスポンスがあればそのエラーメッセージを使用、なければ一般的なメッセージ
-      // AxiosErrorの構造を確認し、より詳細な情報を取得できる場合は修正
+      console.error("Search API error:", err);
       const errorMessage = err.response?.data?.error || err.message || "An unknown error occurred.";
       setError(`Search failed: ${errorMessage}`);
       setResults([]);
     } finally {
-        // 検索処理の最後にローディング終了
         setLoading(false);
     }
   };
 
+  const handleAuthorshipAnalysis = async () => {
+    setAuthorshipError("");
+    setAuthorshipResult(null);
+    setAuthorshipLoading(true);
+
+    if (!urlA.trim() || !urlB.trim()) {
+        setAuthorshipError("Please provide two Wikipedia URLs for authorship analysis.");
+        setAuthorshipLoading(false); return;
+    }
+
+    const isValidUrl = (urlString: string): boolean => {
+        try {
+            const parsedUrl = new URL(urlString);
+            return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+        } catch (e) {
+            return false;
+        }
+    };
+
+    if (!isValidUrl(urlA.trim())) {
+        setAuthorshipError("URL for Author A is invalid. Please enter a valid URL (e.g., https://en.wikipedia.org/wiki/PageName).");
+        setAuthorshipLoading(false); return;
+    }
+    if (!isValidUrl(urlB.trim())) {
+        setAuthorshipError("URL for Author B is invalid. Please enter a valid URL (e.g., https://en.wikipedia.org/wiki/PageName).");
+        setAuthorshipLoading(false); return;
+    }
+
+    try {
+        const response = await axios.post<AuthorshipAnalysisResult>(
+            "http://localhost:5000/api/authorship",
+            { url_a: urlA.trim(), url_b: urlB.trim() },
+            { headers: { "Content-Type": "application/json" } }
+        );
+        // Backend might send an error within a success (200) or client error (400) response body
+        if (response.data.error) {
+            setAuthorshipError(response.data.error);
+            setAuthorshipResult(null);
+        } else {
+            setAuthorshipResult(response.data);
+            setAuthorshipError("");
+        }
+    } catch (err: any) {
+        console.error("Authorship API error:", err);
+        const errorMessage = err.response?.data?.error || err.message || "An unknown error occurred during authorship analysis.";
+        setAuthorshipError(`Authorship analysis failed: ${errorMessage}`);
+        setAuthorshipResult(null);
+    } finally {
+        setAuthorshipLoading(false);
+    }
+  };
+
+
   return (
-    <div>
-      <h1>Wikipedia Phrase Search</h1>
+    <div style={{ fontFamily: 'Arial, sans-serif', maxWidth: '900px', margin: '20px auto', padding: '20px', color: '#333' }}>
+      <header style={{ textAlign: 'center', marginBottom: '30px' }}>
+        <h1 style={{ fontSize: '2.5em', color: '#2c3e50' }}>Wikipedia Text Tools</h1>
+      </header>
 
-      <div>
-          <label htmlFor="wiki-url">Wikipedia URL:</label>
-          <input
-            id="wiki-url"
-            type="text"
-            value={url}
-            onChange={(e) => {
-                setUrl(e.target.value);
-                handleInputChange();
-            }}
-            placeholder="Enter Wikipedia URL"
-            style={{ width: '80%', marginRight: '10px', padding: '5px' }}
-          />
-      </div>
-
-      <div style={{ marginTop: '10px' }}>
-           <label htmlFor="search-phrase">Phrase:</label>
+      {/* --- Wikipedia Phrase Search Section --- */}
+      <section style={{ marginBottom: '40px', padding: '25px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
+        <h2 style={{ marginTop: 0, borderBottom: '2px solid #3498db', paddingBottom: '10px', color: '#3498db' }}>Phrase Search</h2>
+        
+        <div style={{ marginBottom: '15px' }}>
+            <label htmlFor="wiki-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Wikipedia URL:</label>
+            <input
+              id="wiki-url"
+              type="text"
+              value={url}
+              onChange={(e) => { setUrl(e.target.value); handleInputChange(); }}
+              placeholder="e.g., https://en.wikipedia.org/wiki/Banana"
+              style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}
+            />
+        </div>
+        <div style={{ marginBottom: '15px' }}>
+            <label htmlFor="search-phrase" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Phrase (1-2 words):</label>
             <input
                 id="search-phrase"
                 type="text"
                 value={phrase}
-                onChange={(e) => {
-                    setPhrase(e.target.value);
-                    handleInputChange();
-                }}
-                placeholder="Enter a word or phrase (max 2 words)"
-                style={{ marginRight: '10px', padding: '5px' }}
+                onChange={(e) => { setPhrase(e.target.value); handleInputChange(); }}
+                placeholder="e.g., yellow fruit"
+                style={{ width: 'calc(70% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', marginRight: '10px' }}
             />
-            {/* ローディング中はボタンを無効化＆テキスト変更、入力が不完全でも無効化 */}
-            <button onClick={handleSearch} disabled={loading || !url.trim() || !phrase.trim() || phrase.trim().split(/\s+/).length > 2}>
-                {loading ? 'Loading...' : 'Search'}
+            <button 
+                onClick={handleSearch} 
+                disabled={loading || !url.trim() || !phrase.trim() || phrase.trim().split(/\s+/).length > 2} 
+                style={{ padding: '10px 20px', background: '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1em', opacity: (loading || !url.trim() || !phrase.trim() || phrase.trim().split(/\s+/).length > 2) ? 0.6 : 1 }}
+            >
+                {loading ? 'Searching...' : 'Search'}
             </button>
-      </div>
-
-      {/* エラーメッセージはerrorステートに基づいて表示 */}
-      {error && <p style={{ color: "red", marginTop: '10px' }}>{error}</p>}
-
-      {/* 結果がある場合のみリストを表示 */}
-      {results.length > 0 && (
-        <div style={{ marginTop: '20px' }}>
-            <h2>Search Results ({results.length} matches)</h2>
-            <ul>
-                {/* ★ここを修正：dangerouslySetInnerHTML を廃止★ */}
-                {results.map((result, index) => (
-                    <li key={index} style={{ marginBottom: '15px', borderBottom: '1px solid #eee', paddingBottom: '10px' }}>
-                        {/* コンテキスト単語リストをループ処理 */}
-                        {result.context_words.map((word, wordIndex) => (
-                            <React.Fragment key={wordIndex}>
-                                {/* 一致した範囲の単語だけを強調 */}
-                                {wordIndex >= result.matched_start && wordIndex < result.matched_end ? (
-                                    <strong style={{ backgroundColor: 'yellow' }}>{word}</strong> // 見つけやすく黄色背景に
-                                ) : (
-                                    word
-                                )}
-                                {/* 最後の単語以外はスペースを追加 */}
-                                {wordIndex < result.context_words.length - 1 && ' '}
-                            </React.Fragment>
-                        ))}
-                    </li>
-                ))}
-            </ul>
         </div>
-      )}
+        {error && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {error}</p>}
+        
+        {results.length > 0 && !loading && (
+          <div style={{ marginTop: '25px' }}>
+              <h3 style={{ color: '#2980b9' }}>Search Results <span style={{fontSize: '0.8em', color: '#7f8c8d'}}>({results.length} matches)</span></h3>
+              <ul style={{ listStyleType: 'none', padding: 0 }}>
+                  {results.map((result, index) => (
+                      <li key={index} style={{ marginBottom: '18px', borderBottom: '1px dashed #eee', paddingBottom: '18px', lineHeight: '1.7' }}>
+                          {result.context_words.map((word, wordIndex) => (
+                              <React.Fragment key={wordIndex}>
+                                  {wordIndex >= result.matched_start && wordIndex < result.matched_end ? (
+                                      <strong style={{ backgroundColor: '#f1c40f', padding: '2px 4px', borderRadius: '3px', color: '#2c3e50' }}>{word}</strong>
+                                  ) : (
+                                      word
+                                  )}
+                                  {wordIndex < result.context_words.length - 1 && ' '}
+                              </React.Fragment>
+                          ))}
+                      </li>
+                  ))}
+              </ul>
+          </div>
+        )}
+        {!error && results.length === 0 && searchAttempted && !loading && (
+           <p style={{ marginTop: '15px', color: '#7f8c8d', background: '#ecf0f1', padding: '10px', borderRadius: '4px' }}>No results found for "{phrase}".</p>
+        )}
+        {!error && results.length === 0 && !searchAttempted && !loading && (
+           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter a Wikipedia URL and a phrase to begin searching.</p>
+        )}
+      </section>
 
-      {/* 結果がなくてエラーもなく、かつ検索が一度でも試みられた場合に「見つかりませんでした」を表示 */}
-      {!error && results.length === 0 && searchAttempted && !loading && (
-         <p style={{ marginTop: '10px' }}>No results found for "{phrase}". Please check the URL and phrase.</p>
-      )}
+      {/* --- Wikipedia Authorship Analysis Section --- */}
+      <section style={{ padding: '25px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
+        <h2 style={{ marginTop: 0, borderBottom: '2px solid #27ae60', paddingBottom: '10px', color: '#27ae60' }}>Authorship Analysis</h2>
+        <p style={{color: "#555", fontSize: "0.95em", marginBottom: '20px'}}>Compare writing styles from two Wikipedia articles.</p>
+        
+        <div style={{ marginBottom: '15px' }}>
+            <label htmlFor="author-a-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>URL for Author A:</label>
+            <input
+                id="author-a-url"
+                type="text"
+                value={urlA}
+                onChange={(e) => { setUrlA(e.target.value); handleAuthorshipInputChange(); }}
+                placeholder="e.g., https://en.wikipedia.org/wiki/Plato"
+                style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}
+            />
+        </div>
+        <div style={{ marginBottom: '20px' }}>
+            <label htmlFor="author-b-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>URL for Author B:</label>
+            <input
+                id="author-b-url"
+                type="text"
+                value={urlB}
+                onChange={(e) => { setUrlB(e.target.value); handleAuthorshipInputChange(); }}
+                placeholder="e.g., https://en.wikipedia.org/wiki/Aristotle"
+                style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}
+            />
+        </div>
+        <button 
+            onClick={handleAuthorshipAnalysis} 
+            disabled={authorshipLoading || !urlA.trim() || !urlB.trim()} 
+            style={{ padding: '12px 25px', background: '#27ae60', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1.05em', opacity: (authorshipLoading || !urlA.trim() || !urlB.trim()) ? 0.6 : 1 }}
+        >
+            {authorshipLoading ? 'Analyzing...' : 'Analyze Authorship'}
+        </button>
 
-      {/* 初期表示時や入力中の何も表示されない状態 */}
-       {!error && results.length === 0 && !searchAttempted && !loading && (
-          <p style={{ marginTop: '10px', color: '#888' }}>Enter a Wikipedia URL and a phrase to search.</p>
-       )}
+        {authorshipError && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {authorshipError}</p>}
+
+        {authorshipResult && !authorshipLoading && (
+            <div style={{ marginTop: '25px' }}>
+                <h3 style={{color: '#16a085'}}>Analysis Results</h3>
+                <div style={{ background: '#ecf0f1', padding: '15px', borderRadius: '4px', marginBottom: '20px' }}>
+                    <p style={{margin: '5px 0'}}><strong>Model Accuracy:</strong> <span style={{fontSize: '1.1em', color: '#2c3e50'}}>{authorshipResult.accuracy}</span></p>
+                    <p style={{margin: '5px 0'}}><strong>Training Samples:</strong> {authorshipResult.training_samples_count}</p>
+                    <p style={{margin: '5px 0'}}><strong>Test Samples:</strong> {authorshipResult.test_samples_count}</p>
+                </div>
+                
+                <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{color: '#16a085'}}>Classification Report:</h4>
+                    <pre style={{ background: '#e8f6f3', padding: '15px', borderRadius: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-all', border: '1px solid #d0e9e1', fontSize: '0.9em', lineHeight: '1.6' }}>
+                        {authorshipResult.classification_report}
+                    </pre>
+                </div>
+
+                <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{color: '#16a085'}}>Most Distinctive Words/N-grams (Top 10):</h4>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                        <div style={{flex: '1 1 45%', minWidth: '280px', marginBottom: '10px'}}>
+                            <strong>Author A (from <a href={urlA} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlA.split('/').pop()}</a>):</strong>
+                            <ul style={{ listStyleType: 'square', paddingLeft: '20px', background: '#fdfefe', border: '1px solid #eaeded', borderRadius: '4px', padding: '10px 10px 10px 30px', marginTop: '5px'}}>
+                                {authorshipResult.distinctive_words.AuthorA?.map((word, i) => <li key={`a-${i}`} style={{marginBottom: '3px'}}>{word}</li>) || <li>N/A</li>}
+                            </ul>
+                        </div>
+                        <div style={{flex: '1 1 45%', minWidth: '280px'}}>
+                            <strong>Author B (from <a href={urlB} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlB.split('/').pop()}</a>):</strong>
+                            <ul style={{ listStyleType: 'square', paddingLeft: '20px', background: '#fdfefe', border: '1px solid #eaeded', borderRadius: '4px', padding: '10px 10px 10px 30px', marginTop: '5px'}}>
+                                {authorshipResult.distinctive_words.AuthorB?.map((word, i) => <li key={`b-${i}`} style={{marginBottom: '3px'}}>{word}</li>) || <li>N/A</li>}
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 style={{color: '#16a085'}}>Sample Predictions on Test Sentences (Max 5):</h4>
+                    <ul style={{ listStyleType: 'none', padding: 0 }}>
+                        {authorshipResult.sample_predictions.map((pred, i) => (
+                            <li key={`pred-${i}`} style={{ border: '1px solid #eaeded', background: '#fdfefe', padding: '12px', marginBottom: '10px', borderRadius: '4px' }}>
+                                <p style={{ margin: '0 0 8px 0', fontStyle: 'italic', color: '#566573' }}>"{pred.sentence_snippet}"</p>
+                                <p style={{ margin: 0, fontSize: '0.95em' }}>
+                                    <span style={{ 
+                                        fontWeight: 'bold', 
+                                        color: pred.true_label === pred.predicted_label ? '#229954' : '#c0392b',
+                                        padding: '3px 6px',
+                                        borderRadius: '3px',
+                                        background: pred.true_label === pred.predicted_label ? '#d4efdf' : '#f5b7b1'
+                                    }}>
+                                        Predicted: {pred.predicted_label}
+                                    </span>
+                                    <span style={{marginLeft: '10px', color: '#7f8c8d'}}>(True: {pred.true_label})</span>
+                                </p>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            </div>
+        )}
+         {!authorshipError && !authorshipResult && !authorshipLoading && (
+           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter two Wikipedia URLs and click "Analyze Authorship" to view the analysis.</p>
+        )}
+      </section>
+      <footer style={{textAlign: 'center', marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #eee', fontSize: '0.9em', color: '#7f8c8d'}}>
+        <p>Wikipedia Text Tools</p>
+      </footer>
     </div>
   );
 };
