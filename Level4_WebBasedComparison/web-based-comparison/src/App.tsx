@@ -1,25 +1,24 @@
 // src/App.tsx
-import React, { useState } from 'react';
+import React, { useState /* useMemo was not used, can be removed if not planned elsewhere */ } from 'react';
 import axios from 'axios';
 
-// --- Phrase Search Types ---
-interface SearchResult {
+// --- KWIC Search Types (旧 Phrase Search) ---
+interface KWICSearchResult {
     context_words: string[];
     matched_start: number;
     matched_end: number;
 }
 
-interface PhraseSearchResponse {
-    results: SearchResult[];
+interface KWICSearchResponse {
+    results: KWICSearchResult[];
     error?: string;
 }
 
-// --- Authorship Analysis Types ---
+// --- Authorship Analysis Types (変更なし) ---
 interface DistinctiveWords {
     AuthorA: string[];
     AuthorB: string[];
-    // Potentially other authors if the backend model changes
-    [key: string]: string[]; // Index signature for dynamic author keys
+    [key: string]: string[];
 }
 
 interface SamplePrediction {
@@ -35,20 +34,25 @@ interface AuthorshipAnalysisResult {
     sample_predictions: SamplePrediction[];
     training_samples_count: number;
     test_samples_count: number;
-    error?: string; // For errors returned in the JSON body with a 200/400 status
+    error?: string;
 }
+
+type SearchType = 'token' | 'pos' | 'entity';
 
 
 const App: React.FC = () => {
-  // --- Phrase Search State ---
   const [url, setUrl] = useState('https://en.wikipedia.org/wiki/Banana');
-  const [phrase, setPhrase] = useState("");
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [error, setError] = useState("");
-  const [searchAttempted, setSearchAttempted] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchType, setSearchType] = useState<SearchType>('token');
+  const [kwicResults, setKwicResults] = useState<KWICSearchResult[]>([]);
+  const [kwicError, setKwicError] = useState("");
+  const [kwicSearchAttempted, setKwicSearchAttempted] = useState(false);
+  const [kwicLoading, setKwicLoading] = useState(false);
 
-  // --- Authorship Analysis State ---
+  const [highlightBgColor, setHighlightBgColor] = useState<string>('#f1c40f');
+  const [highlightTextColor, setHighlightTextColor] = useState<string>('#2c3e50');
+  const [contextWindowSize, setContextWindowSize] = useState<number>(5);
+
   const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Plato');
   const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Aristotle');
   const [authorshipResult, setAuthorshipResult] = useState<AuthorshipAnalysisResult | null>(null);
@@ -56,10 +60,10 @@ const App: React.FC = () => {
   const [authorshipLoading, setAuthorshipLoading] = useState(false);
 
 
-  const handleInputChange = () => {
-      setError("");
-      setResults([]);
-      setSearchAttempted(false);
+  const handleKwicInputChange = () => {
+      setKwicError("");
+      setKwicResults([]);
+      setKwicSearchAttempted(false);
   };
   
   const handleAuthorshipInputChange = () => {
@@ -67,45 +71,54 @@ const App: React.FC = () => {
     setAuthorshipResult(null);
   };
 
-  const handleSearch = async () => {
-    setError("");
-    setResults([]);
-    setSearchAttempted(true);
-    setLoading(true);
+  const handleKwicSearch = async () => {
+    setKwicError("");
+    setKwicResults([]);
+    setKwicSearchAttempted(true);
+    setKwicLoading(true);
 
     if (!url.trim()) {
-        setError("Please provide a Wikipedia URL.");
-        setSearchAttempted(false); setLoading(false); return;
+        setKwicError("Please provide a Wikipedia URL.");
+        setKwicSearchAttempted(false); setKwicLoading(false); return;
     }
-    if (!phrase.trim()) {
-        setError("Please provide a phrase to search.");
-        setSearchAttempted(false); setLoading(false); return;
+    if (!searchQuery.trim()) {
+        setKwicError("Please provide a search query (token, POS tag, or entity).");
+        setKwicSearchAttempted(false); setKwicLoading(false); return;
     }
-    if (phrase.trim().split(/\s+/).length > 2) {
-        setError("Please enter one or two words only.");
-        setSearchAttempted(false); setLoading(false); return;
+    
+    if (searchType === 'token' && searchQuery.trim().split(/\s+/).length > 5) { 
+        setKwicError("For token search, please enter one to five words only.");
+        setKwicSearchAttempted(false); setKwicLoading(false); return;
+    }
+    if ((searchType === 'pos' || searchType === 'entity') && searchQuery.trim().includes(" ")) {
+      setKwicError(`For ${searchType} search, please enter a single tag/entity type (e.g., NNP, PERSON). No spaces allowed.`);
+      setKwicSearchAttempted(false); setKwicLoading(false); return;
     }
 
     try {
-      const response = await axios.post<PhraseSearchResponse>(
+      const response = await axios.post<KWICSearchResponse>(
         "http://localhost:5000/api/search",
-        { url: url.trim(), phrase: phrase.trim() },
+        { 
+            url: url.trim(), 
+            query: searchQuery.trim(),
+            type: searchType
+        },
         { headers: { "Content-Type": "application/json" } }
       );
       if (response.data.error) {
-        setError(response.data.error);
-        setResults([]);
+        setKwicError(response.data.error);
+        setKwicResults([]);
       } else {
-        setResults(response.data.results || []); // Ensure results is always an array
-        setError("");
+        setKwicResults(response.data.results || []); 
+        setKwicError("");
       }
     } catch (err: any) {
-      console.error("Search API error:", err);
+      console.error("KWIC Search API error:", err);
       const errorMessage = err.response?.data?.error || err.message || "An unknown error occurred.";
-      setError(`Search failed: ${errorMessage}`);
-      setResults([]);
+      setKwicError(`Search failed: ${errorMessage}`);
+      setKwicResults([]);
     } finally {
-        setLoading(false);
+        setKwicLoading(false);
     }
   };
 
@@ -143,7 +156,6 @@ const App: React.FC = () => {
             { url_a: urlA.trim(), url_b: urlB.trim() },
             { headers: { "Content-Type": "application/json" } }
         );
-        // Backend might send an error within a success (200) or client error (400) response body
         if (response.data.error) {
             setAuthorshipError(response.data.error);
             setAuthorshipResult(null);
@@ -160,6 +172,31 @@ const App: React.FC = () => {
         setAuthorshipLoading(false);
     }
   };
+  
+  const getDisplayedContext = (result: KWICSearchResult) => {
+    const { context_words, matched_start, matched_end } = result;
+    const displayStart = Math.max(0, matched_start - contextWindowSize);
+    const displayEnd = Math.min(context_words.length, matched_end + contextWindowSize);
+    
+    const wordsToDisplay: Array<{type: 'word' | 'ellipsis', content: string, isMatched?: boolean}> = [];
+
+    if (displayStart > 0) {
+        wordsToDisplay.push({ type: 'ellipsis', content: '... ' });
+    }
+
+    for (let i = displayStart; i < displayEnd; i++) {
+        wordsToDisplay.push({
+            type: 'word',
+            content: context_words[i],
+            isMatched: i >= matched_start && i < matched_end
+        });
+    }
+
+    if (displayEnd < context_words.length) {
+        wordsToDisplay.push({ type: 'ellipsis', content: ' ...' });
+    }
+    return wordsToDisplay;
+  };
 
 
   return (
@@ -168,71 +205,128 @@ const App: React.FC = () => {
         <h1 style={{ fontSize: '2.5em', color: '#2c3e50' }}>Wikipedia Text Tools</h1>
       </header>
 
-      {/* --- Wikipedia Phrase Search Section --- */}
       <section style={{ marginBottom: '40px', padding: '25px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
-        <h2 style={{ marginTop: 0, borderBottom: '2px solid #3498db', paddingBottom: '10px', color: '#3498db' }}>Phrase Search</h2>
+        <h2 style={{ marginTop: 0, borderBottom: '2px solid #3498db', paddingBottom: '10px', color: '#3498db' }}>KWIC Search (Key Word In Context)</h2>
         
         <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="wiki-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Wikipedia URL:</label>
+            <label htmlFor="kwic-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Wikipedia URL:</label>
             <input
-              id="wiki-url"
+              id="kwic-url"
               type="text"
               value={url}
-              onChange={(e) => { setUrl(e.target.value); handleInputChange(); }}
+              onChange={(e) => { setUrl(e.target.value); handleKwicInputChange(); }}
               placeholder="e.g., https://en.wikipedia.org/wiki/Banana"
               style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}
             />
         </div>
-        <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="search-phrase" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Phrase (1-2 words):</label>
-            <input
-                id="search-phrase"
-                type="text"
-                value={phrase}
-                onChange={(e) => { setPhrase(e.target.value); handleInputChange(); }}
-                placeholder="e.g., yellow fruit"
-                style={{ width: 'calc(70% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', marginRight: '10px' }}
-            />
+
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 200px', minWidth: '180px' }}>
+                <label htmlFor="search-type" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Search Type:</label>
+                <select 
+                    id="search-type"
+                    value={searchType}
+                    onChange={(e) => { setSearchType(e.target.value as SearchType); setSearchQuery(""); handleKwicInputChange(); }}
+                    style={{ width: '100%', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', height: '42px', boxSizing: 'border-box' }}
+                >
+                    <option value="token">Token(s)</option>
+                    <option value="pos">POS Tag</option>
+                    <option value="entity">Entity Type</option>
+                </select>
+            </div>
+            <div style={{ flex: '2 1 300px', minWidth: '250px' }}>
+                <label htmlFor="search-query" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
+                    {searchType === 'token' ? 'Keyword(s):' : searchType === 'pos' ? 'POS Tag (e.g., NNP, VBZ):' : 'Entity Type (e.g., PERSON, ORG):'}
+                </label>
+                <input
+                    id="search-query"
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => { setSearchQuery(e.target.value); handleKwicInputChange(); }}
+                    placeholder={
+                        searchType === 'token' ? "e.g., yellow fruit (max 5 words)" :
+                        searchType === 'pos' ? "e.g., VBZ" :
+                        "e.g., GPE (Geo-Political Entity)"
+                    }
+                    style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }}
+                />
+            </div>
+        </div>
+        
+        <div style={{ marginBottom: '20px' }}>
             <button 
-                onClick={handleSearch} 
-                disabled={loading || !url.trim() || !phrase.trim() || phrase.trim().split(/\s+/).length > 2} 
-                style={{ padding: '10px 20px', background: '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1em', opacity: (loading || !url.trim() || !phrase.trim() || phrase.trim().split(/\s+/).length > 2) ? 0.6 : 1 }}
+                onClick={handleKwicSearch} 
+                disabled={kwicLoading || !url.trim() || !searchQuery.trim()}
+                style={{ padding: '10px 20px', background: '#3498db', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '1em', opacity: (kwicLoading || !url.trim() || !searchQuery.trim()) ? 0.6 : 1 }}
             >
-                {loading ? 'Searching...' : 'Search'}
+                {kwicLoading ? 'Searching...' : 'Search KWIC'}
             </button>
         </div>
-        {error && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {error}</p>}
+
+        <details style={{ marginBottom: '20px', border: '1px solid #eee', padding: '12px', borderRadius: '4px', background: '#fdfdfd' }}>
+            <summary style={{ fontWeight: 'bold', cursor: 'pointer', color: '#2980b9', userSelect: 'none' }}>Display Settings</summary>
+            <div style={{ marginTop: '15px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
+                <div>
+                    <label htmlFor="highlight-bg-color" style={{ display: 'block', marginBottom: '5px', fontSize: '0.9em' }}>Highlight Background:</label>
+                    <input type="color" id="highlight-bg-color" value={highlightBgColor} onChange={(e) => setHighlightBgColor(e.target.value)} style={{height: '35px', width: '70px', border: '1px solid #ccc', borderRadius: '3px', cursor: 'pointer'}}/>
+                </div>
+                <div>
+                    <label htmlFor="highlight-text-color" style={{ display: 'block', marginBottom: '5px', fontSize: '0.9em' }}>Highlight Text Color:</label>
+                    <input type="color" id="highlight-text-color" value={highlightTextColor} onChange={(e) => setHighlightTextColor(e.target.value)} style={{height: '35px', width: '70px', border: '1px solid #ccc', borderRadius: '3px', cursor: 'pointer'}}/>
+                </div>
+                <div>
+                    <label htmlFor="context-window" style={{ display: 'block', marginBottom: '5px', fontSize: '0.9em' }}>Context Window (words before/after):</label>
+                    <input 
+                        type="number" 
+                        id="context-window" 
+                        value={contextWindowSize} 
+                        onChange={(e) => setContextWindowSize(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                        min="0" 
+                        max="20"
+                        style={{ padding: '8px', width: '70px', border: '1px solid #ccc', borderRadius: '4px', boxSizing: 'border-box' }} 
+                    />
+                </div>
+            </div>
+        </details>
         
-        {results.length > 0 && !loading && (
+        {kwicError && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {kwicError}</p>}
+        
+        {kwicResults.length > 0 && !kwicLoading && (
           <div style={{ marginTop: '25px' }}>
-              <h3 style={{ color: '#2980b9' }}>Search Results <span style={{fontSize: '0.8em', color: '#7f8c8d'}}>({results.length} matches)</span></h3>
+              <h3 style={{ color: '#2980b9' }}>Search Results <span style={{fontSize: '0.8em', color: '#7f8c8d'}}>({kwicResults.length} matches)</span></h3>
               <ul style={{ listStyleType: 'none', padding: 0 }}>
-                  {results.map((result, index) => (
-                      <li key={index} style={{ marginBottom: '18px', borderBottom: '1px dashed #eee', paddingBottom: '18px', lineHeight: '1.7' }}>
-                          {result.context_words.map((word, wordIndex) => (
-                              <React.Fragment key={wordIndex}>
-                                  {wordIndex >= result.matched_start && wordIndex < result.matched_end ? (
-                                      <strong style={{ backgroundColor: '#f1c40f', padding: '2px 4px', borderRadius: '3px', color: '#2c3e50' }}>{word}</strong>
-                                  ) : (
-                                      word
-                                  )}
-                                  {wordIndex < result.context_words.length - 1 && ' '}
-                              </React.Fragment>
-                          ))}
-                      </li>
-                  ))}
+                  {kwicResults.map((result, index) => {
+                      const displayedItems = getDisplayedContext(result);
+                      return (
+                        <li key={index} style={{ marginBottom: '18px', borderBottom: '1px dashed #eee', paddingBottom: '18px', lineHeight: '1.7', textAlign: 'left' }}>
+                            {displayedItems.map((item, itemIndex) => (
+                                <React.Fragment key={itemIndex}>
+                                    {item.type === 'word' ? (
+                                        item.isMatched ? (
+                                            <strong style={{ backgroundColor: highlightBgColor, color: highlightTextColor, padding: '2px 4px', borderRadius: '3px' }}>{item.content}</strong>
+                                        ) : (
+                                            item.content
+                                        )
+                                    ) : (
+                                        <span style={{color: '#7f8c8d', fontStyle: 'italic'}}>{item.content}</span>
+                                    )}
+                                    {(item.type === 'word' && itemIndex < displayedItems.length -1 && displayedItems[itemIndex+1].type === 'word') ? ' ' : ''}
+                                </React.Fragment>
+                            ))}
+                        </li>
+                      );
+                  })}
               </ul>
           </div>
         )}
-        {!error && results.length === 0 && searchAttempted && !loading && (
-           <p style={{ marginTop: '15px', color: '#7f8c8d', background: '#ecf0f1', padding: '10px', borderRadius: '4px' }}>No results found for "{phrase}".</p>
+        {!kwicError && kwicResults.length === 0 && kwicSearchAttempted && !kwicLoading && (
+           <p style={{ marginTop: '15px', color: '#7f8c8d', background: '#ecf0f1', padding: '10px', borderRadius: '4px' }}>No results found for "{searchQuery}" (Type: {searchType}).</p>
         )}
-        {!error && results.length === 0 && !searchAttempted && !loading && (
-           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter a Wikipedia URL and a phrase to begin searching.</p>
+        {!kwicError && kwicResults.length === 0 && !kwicSearchAttempted && !kwicLoading && (
+           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter a Wikipedia URL and query to begin KWIC searching.</p>
         )}
       </section>
 
-      {/* --- Wikipedia Authorship Analysis Section --- */}
       <section style={{ padding: '25px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
         <h2 style={{ marginTop: 0, borderBottom: '2px solid #27ae60', paddingBottom: '10px', color: '#27ae60' }}>Authorship Analysis</h2>
         <p style={{color: "#555", fontSize: "0.95em", marginBottom: '20px'}}>Compare writing styles from two Wikipedia articles.</p>
@@ -287,15 +381,15 @@ const App: React.FC = () => {
 
                 <div style={{ marginBottom: '20px' }}>
                     <h4 style={{color: '#16a085'}}>Most Distinctive Words/N-grams (Top 10):</h4>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '15px' }}>
                         <div style={{flex: '1 1 45%', minWidth: '280px', marginBottom: '10px'}}>
-                            <strong>Author A (from <a href={urlA} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlA.split('/').pop()}</a>):</strong>
+                            <strong>Author A (from <a href={urlA} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlA.split('/').pop() || urlA}</a>):</strong>
                             <ul style={{ listStyleType: 'square', paddingLeft: '20px', background: '#fdfefe', border: '1px solid #eaeded', borderRadius: '4px', padding: '10px 10px 10px 30px', marginTop: '5px'}}>
                                 {authorshipResult.distinctive_words.AuthorA?.map((word, i) => <li key={`a-${i}`} style={{marginBottom: '3px'}}>{word}</li>) || <li>N/A</li>}
                             </ul>
                         </div>
                         <div style={{flex: '1 1 45%', minWidth: '280px'}}>
-                            <strong>Author B (from <a href={urlB} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlB.split('/').pop()}</a>):</strong>
+                            <strong>Author B (from <a href={urlB} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlB.split('/').pop() || urlB}</a>):</strong>
                             <ul style={{ listStyleType: 'square', paddingLeft: '20px', background: '#fdfefe', border: '1px solid #eaeded', borderRadius: '4px', padding: '10px 10px 10px 30px', marginTop: '5px'}}>
                                 {authorshipResult.distinctive_words.AuthorB?.map((word, i) => <li key={`b-${i}`} style={{marginBottom: '3px'}}>{word}</li>) || <li>N/A</li>}
                             </ul>
@@ -332,7 +426,7 @@ const App: React.FC = () => {
         )}
       </section>
       <footer style={{textAlign: 'center', marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #eee', fontSize: '0.9em', color: '#7f8c8d'}}>
-        <p>Wikipedia Text Tools</p>
+        <p>Wikipedia Text Tools - KWIC & Authorship Analysis</p>
       </footer>
     </div>
   );

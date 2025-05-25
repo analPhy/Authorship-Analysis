@@ -1,41 +1,6 @@
 # Wikipedia Phrase Search App
 # Wikipedia フレーズ検索アプリケーション
 
-## Project Overview
-## プロジェクト概要
-
-This project is a simple web application using Python (Flask) for the backend and React (JavaScript) for the frontend. It allows users to fetch text from a specified Wikipedia URL, search for words or phrases (up to 2 words) within that text, and display the context of the matches.
-
-It's designed as a learning project with several basic security measures implemented.
-
----
-
-本プロジェクトは、Python (Flask) をバックエンド、React (JavaScript) をフロントエンドとして使用したシンプルなWebアプリケーションです。指定したWikipediaのページのテキストを取得し、その中から入力された単語やフレーズ（最大2単語）を検索し、周辺の文脈（コンテキスト）を表示します。
-
-学習目的のプロジェクトであり、いくつかの基本的なセキュリティ対策を施しています。
-
-## Features
-## 機能
-
-* Fetch text from a user-specified Wikipedia URL.
-* Search for phrases of 1 or 2 words.
-* Display search results with context snippets.
-* Basic error handling for URL issues and search failures.
-* Loading indicator during text processing and search.
-* Includes basic security improvements (XSS prevention, URL validation, dev CORS, generic errors).
-* **Note:** The application re-fetches and re-processes the page text on *every* search request, even for the same URL (no stateful cache is used for production compatibility).
-
----
-
-* ユーザーがWikipediaのURLを入力できます。
-* 入力されたURLのページのテキストを取得・解析します。
-* テキスト内から最大2単語のフレーズを検索します。
-* 検索に一致した箇所を文脈とともに表示します。
-* URL取得時や検索時にエラーが表示されます。
-* テキスト処理中はローディング表示が出ます。
-* 基本的なセキュリティ対策済み（XSS対策、URL検証、CORS開発設定、汎用エラーなど）。
-* **注意:** 同じURLでの複数回検索でも、毎回ページ取得・解析を行います（本番環境での状態管理対応のため、状態を持つキャッシュ機能は意図的に含めていません）。
-
 ## Requirements
 ## 動作環境
 
