@@ -47,7 +47,7 @@ Follow these steps to set up the project on your local machine.
             ```
     * Install the required Python packages.
         ```bash
-        pip install Flask Flask-Cors beautifulsoup4 nltk urllib3
+        pip install Flask Flask-Cors beautifulsoup4 nltk urllib3 flask flask-Cors
         ```
     * Download NLTK's `punkt` data. The application might attempt to download it on the first run, but manual download ensures it's available.
         ```bash
@@ -56,10 +56,6 @@ Follow these steps to set up the project on your local machine.
         * If prompted for a download directory, choose the default path (usually within your user's home directory).
 
 3.  **Node.js Environment Setup (Frontend)**
-    * In a terminal, navigate to the React application directory (`./frontend`).
-        ```bash
-        cd frontend
-        ```
     * Install the required Node.js packages.
         ```bash
         npm install
@@ -97,7 +93,7 @@ Follow these steps to set up the project on your local machine.
             ```
     * 必要なPythonパッケージをインストールします。
         ```bash
-        pip install flask flask-Cors beautifulsoup4 nltk urllib3 
+        pip install flask flask-Cors beautifulsoup4 nltk urllib3 flask flask-Cors
         ```
     * NLTKの `punkt` データをダウンロードします。アプリケーション実行時に自動で試みることもありますが、手動でダウンロードしておくと確実です。
         ```bash
@@ -106,10 +102,7 @@ Follow these steps to set up the project on your local machine.
         * もしダウンロード先を聞かれたら、デフォルトのパス（通常はユーザーのホームディレクトリ内）を選択してください。
 
 3.  **Node.js環境のセットアップ（フロントエンド）**
-    * ターミナルで、Reactアプリケーションのディレクトリ (`./frontend`) に移動します。
-        ```bash
-        cd frontend
-        ```
+
     * 必要なNode.jsパッケージをインストールします。
         ```bash
         npm install
@@ -130,7 +123,7 @@ Start the backend and frontend in separate terminals.
         ```
     * The server should start and display a message like:
         ```
-        * Running on [http://127.0.0.1:5000](http://127.0.0.1:5000)
+        * Running on [http://127.0.0.1:8080](http://127.0.0.1:8080)
         ```
     * Keep this terminal running the server.
 
