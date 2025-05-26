@@ -1,7 +1,3 @@
-# 必要なライブラリをインストール
-!pip install beautifulsoup4
-!pip install nltk
-
 # ライブラリのインポート
 import re
 import urllib.request
@@ -11,18 +7,17 @@ import nltk
 from nltk.tokenize import word_tokenize
 from nltk.tag import pos_tag
 
-# NLTKリソースのダウンロード
+# 必要なNLTKリソースをダウンロード
 nltk.download('punkt')
 nltk.download('punkt_tab')
-nltk.download('averaged_perceptron_tagger')
 nltk.download('averaged_perceptron_tagger_eng')
 
-# ANSIエスケープコードで色を定義
+# ANSIカラーコード（コンソール出力用）
 RED = '\033[31m'
 BLUE = '\033[34m'
 RESET = '\033[0m'
 
-# --- テキスト取得 ---
+# Wikipediaページから本文を取得
 def get_clean_wikipedia_text(url):
     try:
         html = urllib.request.urlopen(url).read()
@@ -37,32 +32,29 @@ def get_clean_wikipedia_text(url):
         print(f"Error fetching URL: {e}")
         return None
 
-# --- メイン処理 ---
+# メイン処理
 def find_following_words(text, target_words, mode):
     if not text:
         print("No text to process.")
         return
 
-    # トークン化
-    tokens = [t for t in word_tokenize(text.lower()) if t]  # 空トークンを除外、大文字小文字を統一
+    tokens = [t for t in word_tokenize(text.lower()) if t.isalnum()]
     target_str = ' '.join(target_words).lower()
 
     following_words = []
-    contexts = []  # (前5トークン, ターゲット, 後続トークン, 後5トークン)のリスト
+    contexts = []
 
-    # ターゲット語の後続単語を収集（空白や句読点をスキップ）
     for i in range(len(tokens) - len(target_words)):
-        if ' '.join(tokens[i:i+len(target_words)]).lower() == target_str:
+        if ' '.join(tokens[i:i+len(target_words)]) == target_str:
             next_idx = i + len(target_words)
             while next_idx < len(tokens):
                 next_token = tokens[next_idx]
-                if next_token and next_token.isalnum():
+                if next_token:
                     following_words.append(next_token)
-                    # 前5トークンと後5トークンを取得
                     before = tokens[max(0, i-5):i]
-                    after = tokens[next_idx:next_idx+5]
-                    before_str = ' '.join(before) if before else ''
-                    after_str = ' '.join(after) if after else ''
+                    after = tokens[next_idx+1:next_idx+6]
+                    before_str = ' '.join(before)
+                    after_str = ' '.join(after)
                     contexts.append((before_str, target_str, next_token, after_str))
                     break
                 next_idx += 1
@@ -71,35 +63,39 @@ def find_following_words(text, target_words, mode):
         print("No matches found for the target word(s).")
         return
 
-    # モードに応じた結果表示
+    token_counts = Counter(following_words)
+    sorted_tokens = [token for token, _ in token_counts.most_common()]
+
     if mode == '1':
-        print("\nSequential Results:")
-        for before, target, next_token, after in contexts:
-            print(f"{before} {RED}{target}{RESET} {BLUE}{next_token}{RESET} {after[len(next_token):].strip()}")
-    elif mode == '2':
-        print("\nMost Frequent Tokens:")
-        token_counts = Counter(following_words)
-        for token, freq in token_counts.most_common():
-            print(f"{token}: {freq}")
+        print("\nSequential Results (sorted by frequency):")
+        for token in sorted_tokens:
             for before, target, next_token, after in contexts:
                 if next_token == token:
-                    after_tokens = after.split()[:4]
-                    after_str = ' '.join(after_tokens)
-                    print(f"{before} {RED}{target}{RESET} {BLUE}{next_token}{RESET} {after_str[len(next_token):].strip()}")
-    elif mode == '3':
-        print("\nMost Frequent POS Tags:")
-        # 青文字ワード（next_token）の品詞を個別にカウント
-        pos_tags = [pos_tag([next_token])[0][1] for _, _, next_token, _ in contexts]
-        pos_counts = Counter(pos_tags)
-        for pos, freq in pos_counts.most_common():
-            print(f"{pos}: {freq}")
+                    print(f"{before} {RED}{target}{RESET} {BLUE}{next_token}{RESET} {after}")
+    elif mode == '2':
+        print("\nMost Frequent Tokens:")
+        for token in sorted_tokens:
+            print(f"{token}: {token_counts[token]}")
             for before, target, next_token, after in contexts:
-                if pos_tag([next_token])[0][1] == pos:
-                    print(f"{before} {RED}{target}{RESET} {BLUE}{next_token}{RESET} {after[len(next_token):].strip()}")
+                if next_token == token:
+                    print(f"{before} {RED}{target}{RESET} {BLUE}{next_token}{RESET} {after}")
+    elif mode == '3':
+        print("\nMost Frequent POS Tags (sorted by token frequency):")
+        tagged_tokens = pos_tag(following_words)
+        token_to_pos = dict(tagged_tokens)
+        sorted_tagged = sorted(tagged_tokens, key=lambda x: token_counts[x[0]], reverse=True)
+        seen = set()
+        for word, tag in sorted_tagged:
+            if word not in seen:
+                seen.add(word)
+                print(f"{tag} ({word}): {token_counts[word]}")
+                for before, target, next_token, after in contexts:
+                    if next_token == word:
+                        print(f"{before} {RED}{target}{RESET} {BLUE}{next_token}{RESET} {after}")
     else:
         print("Invalid mode. Please choose 1, 2, or 3.")
 
-# --- ユーザー入力 ---
+# ユーザー入力部分
 def main():
     url = input("Wikipedia URL (e.g., https://en.wikipedia.org/wiki/Banana): ").strip()
     text = get_clean_wikipedia_text(url)
