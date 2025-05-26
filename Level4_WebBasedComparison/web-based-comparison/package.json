@@ -2,7 +2,7 @@
   "name": "web-based-comparison",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://analPhy.github.io/Authorship-Analysis/",
+  "homepage": "https://analphy.github.io/Authorship-Analysis/",
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
