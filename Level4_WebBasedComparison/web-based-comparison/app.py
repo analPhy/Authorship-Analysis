@@ -46,7 +46,8 @@ logging.basicConfig(
 # EN: Check and download required NLTK resources if missing
 # JP: 必要なNLTKリソースがなければダウンロード
 REQUIRED_NLTK_RESOURCES = {
-    "punkt": "tokenizers/punkt",
+    "punkt": "tokenizers/punkt",  # 標準の文分割モデル
+    "punkt_tab": "tokenizers/punkt_tab", # エラーメッセージに基づき追加
     "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger",
     "maxent_ne_chunker": "chunkers/maxent_ne_chunker",
     "words": "corpora/words"
