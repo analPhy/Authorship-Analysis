@@ -97,7 +97,7 @@ const App: React.FC = () => {
 
     try {
       const response = await axios.post<KWICSearchResponse>(
-        "http://localhost:5000/api/search",
+        "http://localhost:8080/api/search",
         { 
             url: url.trim(), 
             query: searchQuery.trim(),
@@ -152,7 +152,7 @@ const App: React.FC = () => {
 
     try {
         const response = await axios.post<AuthorshipAnalysisResult>(
-            "http://localhost:5000/api/authorship",
+            "http://localhost:8080/api/authorship",
             { url_a: urlA.trim(), url_b: urlB.trim() },
             { headers: { "Content-Type": "application/json" } }
         );

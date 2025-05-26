@@ -531,4 +531,4 @@ if __name__ == "__main__":
         print("Warning: Fugashi Tagger failed to initialize. Japanese NLP features for authorship attribution will be limited.")
     
     print("Starting Flask app server...")
-    app.run(debug=True, port=5000, host='0.0.0.0')
+    app.run(debug=True, port=8080, host='0.0.0.0')
