@@ -49,6 +49,8 @@ interface AuthorshipAnalysisResult {
 // JP: KWIC検索タイプの選択肢
 type SearchType = 'token' | 'pos' | 'entity';
 
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
+
 const App: React.FC = () => {
   // --- State Hooks ---
   // EN: State for KWIC search
@@ -113,7 +115,7 @@ const App: React.FC = () => {
 
     try {
       const response = await axios.post<KWICSearchResponse>(
-        "http://localhost:8080/api/search", // Ensure this port matches your Flask server
+        `${API_BASE_URL}/api/search`, // Ensure this port matches your Flask server
         { 
             url: url.trim(), 
             query: searchQuery.trim(),
@@ -169,7 +171,7 @@ const App: React.FC = () => {
 
     try {
         const response = await axios.post<AuthorshipAnalysisResult>(
-            "http://localhost:8080/api/authorship", // Ensure this port matches your Flask server
+            `${API_BASE_URL}/api/authorship`, // Ensure this port matches your Flask server
             { url_a: urlA.trim(), url_b: urlB.trim() },
             { headers: { "Content-Type": "application/json" } }
         );
