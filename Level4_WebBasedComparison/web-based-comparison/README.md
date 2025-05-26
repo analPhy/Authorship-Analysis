@@ -30,7 +30,7 @@ Follow these steps to set up the project on your local machine.
     * Open a terminal and navigate to your project's root directory.
     * Create a Python virtual environment.
         ```bash
-        python -m venv .venv
+        python3 -m venv .venv
         ```
     * Activate the virtual environment.
         * On macOS/Linux:
@@ -80,7 +80,7 @@ Follow these steps to set up the project on your local machine.
     * ターミナルを開き、プロジェクトのルートディレクトリに移動します。
     * Pythonの仮想環境を作成します。
         ```bash
-        python -m venv .venv
+        python3 -m venv .venv
         ```
     * 仮想環境をアクティベートします。
         * macOS/Linuxの場合:
@@ -97,7 +97,7 @@ Follow these steps to set up the project on your local machine.
             ```
     * 必要なPythonパッケージをインストールします。
         ```bash
-        pip install Flask Flask-Cors beautifulsoup4 nltk urllib3
+        pip install flask flask-Cors beautifulsoup4 nltk urllib3 
         ```
     * NLTKの `punkt` データをダウンロードします。アプリケーション実行時に自動で試みることもありますが、手動でダウンロードしておくと確実です。
         ```bash
