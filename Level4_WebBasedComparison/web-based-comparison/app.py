@@ -224,31 +224,37 @@ def mixed_sentence_tokenize_for_authorship(text: str):
     # JP: テキストを文ごとに分割（日本語・英語対応）
     return [s.strip() for s in _SENT_RE.split(text) if s.strip()]
 
+# app.py の tokenize_mixed_for_authorship 関数を以下のように置き換える
+
 def tokenize_mixed_for_authorship(text: str):
-    # EN: Tokenize text based on detected language (Japanese/English)
-    # JP: 言語判定に基づきトークン化（日本語/英語）
-    if not _TAGGER:
-        logging.warning("Fugashi Tagger not available, defaulting to English tokenization for mixed content (authorship).")
-        try:
-            return word_tokenize(text)
-        except Exception as e_tok:
-            logging.error(f"NLTK word_tokenize fallback failed: {e_tok}")
-            return text.split()
+    # EN: Always use English word_tokenize for simplicity and performance on Render free tier.
+    # JP: Render無料枠でのシンプルさとパフォーマンスのため、常に英語のword_tokenizeを使用する。
+    #     言語判定とFugashiの使用を一時的にコメントアウト。
+    # if not _TAGGER:
+    #     logging.warning("Fugashi Tagger not available, defaulting to English tokenization for mixed content (authorship).")
+    #     try:
+    #         return word_tokenize(text)
+    #     except Exception as e_tok:
+    #         logging.error(f"NLTK word_tokenize fallback failed: {e_tok}")
+    #         return text.split()
 
+    # try:
+    #     # This lang_detect call seems to be causing timeouts
+    #     lang = lang_detect(text)
+    # except Exception:
+    #     lang = "en" # Default to English if lang_detect fails
+
+    # if lang == "ja" and _TAGGER: # Ensure _TAGGER is available
+    #     return [tok.surface for tok in _TAGGER(text)]
+    # else:
+    #     # Default to English tokenization
     try:
-        lang = lang_detect(text)
-    except Exception:
-        lang = "en"
-
-    if lang == "ja":
-        return [tok.surface for tok in _TAGGER(text)]
-    else:
-        try:
-            return word_tokenize(text)
-        except Exception as e_tok_en:
-            logging.error(f"NLTK word_tokenize for English text failed: {e_tok_en}")
-            return text.split()
-
+        # Consider lowercasing here if not done elsewhere consistently for TF-IDF
+        return word_tokenize(text) # text.lower() を適用するかはTF-IDFの preprocess との兼ね合い
+    except Exception as e_tok_en:
+        logging.error(f"NLTK word_tokenize for English text failed: {e_tok_en}")
+        return text.split() # text.lower().split()
+    
 def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
     # EN: Build a dataset of sentences and labels for authorship analysis
     # JP: 著者識別分析用の文とラベルのデータセットを作成
