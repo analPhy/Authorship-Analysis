@@ -1,5 +1,6 @@
 # app.py
 
+
 # --- Imports ---
 # EN: Import necessary libraries for web server, text processing, ML, etc.
 # JP: Webサーバー、テキスト処理、機械学習などに必要なライブラリをインポート
@@ -114,23 +115,22 @@ app = Flask(__name__)
 # app.py のCORS設定部分を以下のように変更
 
 # GitHub PagesのURLを特定します。
-# あなたのGitHubユーザー名が "analPhy"、リポジトリ名が "Authorship-Analysis" の場合、
-# GitHub PagesのURLは通常 https://analPhy.github.io/Authorship-Analysis/ となります。
-# CORSオリジンとしてはスキーム＋ホスト名部分を指定します。
-GITHUB_PAGES_ORIGIN = "https://analPhy.github.io" # あなたのユーザー名に合わせて変更してください
-FRONTEND_DEV_ORIGIN_3000 = "http://localhost:3000" # React開発サーバー (create-react-appデフォルト)
-FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080" # ユーザーがフロントエンドで使用していたポート
+## --- CORS 設定 ---
+# EN: Define allowed origins for CORS
+# JP: CORSを許可するオリジンを定義
+FRONTEND_GITHUB_PAGES_ORIGIN = "https://analphy.github.io"  # あなたのGitHub Pagesのオリジン
+FRONTEND_DEV_ORIGIN_3000 = "http://localhost:3000"         # React開発サーバーの一般的なポート
+FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080"         # あなたがフロントエンド開発で使っていたポート
 
-allowed_origins = [
+allowed_origins_list = [
+    FRONTEND_GITHUB_PAGES_ORIGIN,
     FRONTEND_DEV_ORIGIN_3000,
     FRONTEND_DEV_ORIGIN_8080,
-    # GITHUB_PAGES_ORIGIN, # バックエンドデプロイ後に実際のURLが確定したらコメント解除し、正しいURLを設定
 ]
-# バックエンドをデプロイし、GitHub PagesのURLが確定したら、
-# GITHUB_PAGES_ORIGIN の行をコメントアウト解除し、実際のあなたのGitHub Pagesのオリジンに置き換えてください。
-# 例: allowed_origins = ["http://localhost:3000", "http://localhost:8080", "https://analphy.github.io"]
 
-CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
+CORS(app, resources={r"/api/*": {"origins": allowed_origins_list}})
+# --- ここまでCORS設定 ---
+
 # === Text processing for KWIC Search ===
 # EN: Fetch and clean text from a Wikipedia URL for KWIC search
 # JP: KWIC検索用にWikipediaのURLからテキストを取得・整形
