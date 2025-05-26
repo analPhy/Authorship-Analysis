@@ -1,4 +1,8 @@
 # app.py
+
+# --- Imports ---
+# EN: Import necessary libraries for web server, text processing, ML, etc.
+# JP: Webサーバー、テキスト処理、機械学習などに必要なライブラリをインポート
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 # import shutil
@@ -14,25 +18,33 @@ import traceback
 import logging
 import sys
 
-# --- Authorship Attribution 用の追加インポート ---
+# --- Authorship Attribution Imports ---
+# EN: Import scikit-learn modules for authorship analysis
+# JP: 著者識別分析用のscikit-learnモジュールをインポート
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import classification_report as sk_classification_report, accuracy_score
 
-# --- 多言語対応用ライブラリ (Authorship Attribution 用) ---
+# --- Multilingual Support Libraries ---
+# EN: Import libraries for language detection, Japanese tokenization, and stopwords
+# JP: 言語判定、日本語形態素解析、ストップワード用ライブラリをインポート
 from langdetect import detect as lang_detect
 import fugashi
 from stopwordsiso import stopwords
 
-# ロギング設定
+# --- Logging Setup ---
+# EN: Configure logging for debugging and monitoring
+# JP: デバッグや監視用のロギング設定
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     stream=sys.stdout
 )
 
-# NLTKデータ
+# --- NLTK Resource Check ---
+# EN: Check and download required NLTK resources if missing
+# JP: 必要なNLTKリソースがなければダウンロード
 REQUIRED_NLTK_RESOURCES = {
     "punkt": "tokenizers/punkt",
     "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger",
@@ -48,17 +60,15 @@ for download_key, path_to_find in REQUIRED_NLTK_RESOURCES.items():
     except LookupError:
         logging.warning(f"NLTK resource '{download_key}' (for path '{path_to_find}') not found. Attempting to download '{download_key}'...")
         try:
-            # Attempt download, quiet=False for verbose output from NLTK
+            # EN: Attempt to download the resource
+            # JP: リソースのダウンロードを試みる
             download_successful = nltk.download(download_key, quiet=False)
             
             if download_successful:
                 logging.info(f"NLTK download command for '{download_key}' executed, appearing successful.")
-                # Verify by finding again
                 nltk.data.find(path_to_find)
                 logging.info(f"NLTK resource '{download_key}' now found after download.")
             else:
-                # This case might be rare if quiet=False, as errors often raise exceptions.
-                # However, if nltk.download can return False without an exception:
                 logging.error(f"NLTK download for '{download_key}' returned False. Attempting to verify if it's available anyway...")
                 try:
                     nltk.data.find(path_to_find)
@@ -66,11 +76,13 @@ for download_key, path_to_find in REQUIRED_NLTK_RESOURCES.items():
                 except LookupError:
                     logging.error(f"CRITICAL: NLTK resource '{download_key}' still not found after download command returned False. Manual intervention likely required.")
         
-        except Exception as e_download: # Catch any exception during the download or subsequent find
+        except Exception as e_download:
             logging.error(f"Error during NLTK resource '{download_key}' download or verification: {e_download}")
             logging.error(f"Please check network connectivity and NLTK setup. You may need to run: python -m nltk.downloader {download_key}")
 
-# --- Authorship Attribution 用のグローバル設定 ---
+# --- Global Settings for Authorship Attribution ---
+# EN: Initialize Japanese tokenizer and stopwords
+# JP: 日本語トークナイザーとストップワードの初期化
 _TAGGER = None
 try:
     _TAGGER = fugashi.Tagger()
@@ -89,9 +101,13 @@ except Exception as e:
 
 _ALL_SW = sorted(list(_EN_SW.union(_JA_SW)))
 
+# EN: Regex for sentence splitting (Japanese and English)
+# JP: 文分割用の正規表現（日本語・英語対応）
 _SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+")
 
-
+# --- Flask App Setup ---
+# EN: Create Flask app and configure CORS
+# JP: Flaskアプリの作成とCORS設定
 app = Flask(__name__)
 
 allowed_origins = [
@@ -100,8 +116,9 @@ allowed_origins = [
 ]
 CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 
-
 # === Text processing for KWIC Search ===
+# EN: Fetch and clean text from a Wikipedia URL for KWIC search
+# JP: KWIC検索用にWikipediaのURLからテキストを取得・整形
 def get_text_from_url_for_kwic(url):
     logging.info(f"Attempting to fetch URL (for KWIC search): {url}")
     try:
@@ -120,6 +137,8 @@ def get_text_from_url_for_kwic(url):
             html = response.read()
 
         soup = BeautifulSoup(html, 'html.parser')
+        # EN: Remove unnecessary tags
+        # JP: 不要なタグを除去
         for tag in soup(['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
                          'nav', 'footer', 'aside', 'form', 'input', 'button', 'img',
                          'audio', 'video', 'iframe', 'object', 'embed', 'header', 'svg', 'canvas']):
@@ -142,11 +161,15 @@ def get_text_from_url_for_kwic(url):
         raise ValueError(f"An unexpected error occurred while fetching or processing the URL.")
 
 def clean_text_for_kwic(text):
+    # EN: Remove citation numbers and extra spaces
+    # JP: 参照番号や余分な空白を除去
     text = re.sub(r'\[\d+\]', '', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
-# === Authorship Attribution 用ヘルパー関数 (変更なし) ===
+# === Authorship Attribution Helpers ===
+# EN: Fetch and clean Wikipedia text for authorship analysis
+# JP: 著者識別分析用にWikipediaテキストを取得・整形
 def fetch_wikipedia_text_for_authorship(url: str) -> str:
     logging.info(f"Fetching Wikipedia text for authorship from URL: {url}")
     try:
@@ -171,6 +194,8 @@ def fetch_wikipedia_text_for_authorship(url: str) -> str:
         raise ValueError(f"An unexpected error occurred while fetching URL for authorship.")
 
     soup = BeautifulSoup(html, "html.parser")
+    # EN: Remove unnecessary tags
+    # JP: 不要なタグを除去
     for tag in soup(["script", "style", "sup", "table", "nav", "footer", "aside", "header", "form", "figure", "figcaption", "link", "meta", "input", "button", "img", "audio", "video", "iframe", "object", "embed", "svg", "canvas", "noscript"]):
         tag.decompose()
     text = soup.get_text(" ")
@@ -180,9 +205,13 @@ def fetch_wikipedia_text_for_authorship(url: str) -> str:
     return text
 
 def mixed_sentence_tokenize_for_authorship(text: str):
+    # EN: Split text into sentences (supports Japanese and English)
+    # JP: テキストを文ごとに分割（日本語・英語対応）
     return [s.strip() for s in _SENT_RE.split(text) if s.strip()]
 
 def tokenize_mixed_for_authorship(text: str):
+    # EN: Tokenize text based on detected language (Japanese/English)
+    # JP: 言語判定に基づきトークン化（日本語/英語）
     if not _TAGGER:
         logging.warning("Fugashi Tagger not available, defaulting to English tokenization for mixed content (authorship).")
         try:
@@ -206,14 +235,19 @@ def tokenize_mixed_for_authorship(text: str):
             return text.split()
 
 def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
+    # EN: Build a dataset of sentences and labels for authorship analysis
+    # JP: 著者識別分析用の文とラベルのデータセットを作成
     sentences = mixed_sentence_tokenize_for_authorship(text)
     filtered = [s for s in sentences if len(s) >= min_len]
     labels = [author_label] * len(filtered)
     return filtered, labels
 
 # === API Endpoints ===
+
 @app.route('/api/search', methods=['POST'])
 def kwic_search():
+    # EN: KWIC search API endpoint
+    # JP: KWIC検索APIエンドポイント
     data = request.json
     url = data.get('url', '').strip()
     query_input = data.get('query', '').strip()
@@ -221,6 +255,8 @@ def kwic_search():
 
     logging.info(f"Received KWIC search request. URL: {url}, Query: '{query_input}', Type: {search_type}")
 
+    # EN: Input validation
+    # JP: 入力値のバリデーション
     if not url:
         logging.warning("KWIC search request missing URL.")
         return jsonify({"error": "Please provide a Wikipedia URL."}), 400
@@ -232,10 +268,6 @@ def kwic_search():
         if not parsed_url.hostname:
              logging.warning(f"Invalid URL hostname for KWIC search: {url}")
              return jsonify({"error": "Invalid URL hostname."}), 400
-        hostname_lower = parsed_url.hostname.lower()
-        if not (hostname_lower == 'wikipedia.org' or hostname_lower.endswith('.wikipedia.org')):
-            logging.warning(f"URL not from wikipedia.org for KWIC search: {url}")
-            return jsonify({"error": "Only URLs from wikipedia.org are allowed for KWIC search."}), 400
     except ValueError:
          logging.warning(f"Invalid URL format for KWIC search: {url}")
          return jsonify({"error": "Invalid URL format."}), 400
@@ -247,6 +279,8 @@ def kwic_search():
         logging.warning("KWIC search request missing query.")
         return jsonify({"error": "Please provide a search query."}), 400
 
+    # EN: Prepare query for each search type
+    # JP: 検索タイプごとにクエリを準備
     target_tokens = [] # Initialize for token search
     if search_type == 'token':
         target_tokens = query_input.split()
@@ -288,6 +322,8 @@ def kwic_search():
     results = []
     backend_context_window_size = 10
 
+    # EN: KWIC search logic for each type
+    # JP: 各検索タイプごとのKWIC検索ロジック
     if search_type == 'token':
         words_from_page_lower = [w.lower() for w in words_from_page_original_case]
         target_token_list_lower = [word.lower() for word in target_tokens]
@@ -389,15 +425,18 @@ def kwic_search():
     logging.info(f"Found {len(results)} occurrences for query '{query_input}' (Type: {search_type}) in text from {url}")
     return jsonify({"results": results})
 
-
 @app.route('/api/authorship', methods=['POST'])
 def authorship_analysis(): # No changes to this function
+    # EN: Authorship analysis API endpoint
+    # JP: 著者識別分析APIエンドポイント
     data = request.json
     url_a = data.get('url_a', '').strip()
     url_b = data.get('url_b', '').strip()
 
     logging.info(f"Received authorship analysis request for URL A: {url_a}, URL B: {url_b}")
 
+    # EN: Input validation
+    # JP: 入力値のバリデーション
     if not url_a or not url_b:
         logging.warning("Authorship request missing one or both URLs.")
         return jsonify({"error": "Please provide two Wikipedia URLs."}), 400
@@ -456,6 +495,8 @@ def authorship_analysis(): # No changes to this function
         if not X_train or not X_test:
             return jsonify({"error": "Failed to create training/testing sets (empty after split). Likely insufficient data."}), 400
 
+        # EN: Vectorize sentences using TF-IDF (with n-grams and stopwords)
+        # JP: TF-IDF（N-gram・ストップワード対応）で文をベクトル化
         vectorizer = TfidfVectorizer(
             tokenizer=tokenize_mixed_for_authorship,
             token_pattern=None,
@@ -466,9 +507,13 @@ def authorship_analysis(): # No changes to this function
         X_train_vec = vectorizer.fit_transform(X_train)
         X_test_vec = vectorizer.transform(X_test)
 
+        # EN: Train Naive Bayes classifier
+        # JP: ナイーブベイズ分類器で学習
         clf = MultinomialNB()
         clf.fit(X_train_vec, y_train)
 
+        # EN: Extract top distinctive words for each author
+        # JP: 各著者の特徴的な単語を抽出
         distinctive_words = {}
         feature_names = vectorizer.get_feature_names_out()
         for idx, author in enumerate(clf.classes_):
@@ -477,12 +522,15 @@ def authorship_analysis(): # No changes to this function
             top_terms = [feature_names[i] for i in top_indices]
             distinctive_words[author] = top_terms
 
+        # EN: Predict and evaluate
+        # JP: 予測と評価
         preds = clf.predict(X_test_vec)
         acc = accuracy_score(y_test, preds)
         report_target_names = sorted(list(clf.classes_))
         report = sk_classification_report(y_test, preds, digits=3, zero_division=0, target_names=report_target_names)
 
-
+        # EN: Prepare sample predictions for frontend
+        # JP: フロントエンド用のサンプル予測を準備
         sample_predictions = []
         num_samples = min(len(X_test), 5)
         for sent, true_label, pred_label in zip(X_test[:num_samples], y_test[:num_samples], preds[:num_samples]):
@@ -510,10 +558,10 @@ def authorship_analysis(): # No changes to this function
         logging.error(f"An unexpected error occurred during authorship analysis: {e}\n{traceback.format_exc()}")
         return jsonify({"error": "An unexpected server error occurred during authorship analysis."}), 500
 
-
 if __name__ == "__main__":
+    # EN: Startup checks and Flask app launch
+    # JP: 起動時のチェックとFlaskアプリの起動
     print("Flask development server starting...")
-    # Initial NLTK check message before Flask starts serving fully
     print("Verifying NLTK resources (this may take a moment if downloads are needed)...")
     all_nltk_res_ok = True
     for res_key in REQUIRED_NLTK_RESOURCES:
@@ -525,7 +573,6 @@ if __name__ == "__main__":
             all_nltk_res_ok = False
     if all_nltk_res_ok:
         print("All required NLTK resources appear to be available.")
-
 
     if not _TAGGER:
         print("Warning: Fugashi Tagger failed to initialize. Japanese NLP features for authorship attribution will be limited.")

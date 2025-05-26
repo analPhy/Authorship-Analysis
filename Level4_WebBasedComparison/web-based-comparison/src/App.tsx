@@ -53,7 +53,7 @@ const App: React.FC = () => {
   // --- State Hooks ---
   // EN: State for KWIC search
   // JP: KWIC検索用の状態管理
-  const [url, setUrl] = useState('https://en.wikipedia.org/wiki/Banana');
+  const [url, setUrl] = useState('https://en.wikipedia.org/wiki/Banana'); // Placeholder will be more generic below
   const [searchQuery, setSearchQuery] = useState("");
   const [searchType, setSearchType] = useState<SearchType>('token');
   const [kwicResults, setKwicResults] = useState<KWICSearchResult[]>([]);
@@ -69,41 +69,33 @@ const App: React.FC = () => {
 
   // EN: State for authorship analysis
   // JP: 著者識別分析用の状態管理
-  const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Plato');
-  const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Aristotle');
+  const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Plato'); // Placeholder will be more generic below
+  const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Aristotle'); // Placeholder will be more generic below
   const [authorshipResult, setAuthorshipResult] = useState<AuthorshipAnalysisResult | null>(null);
   const [authorshipError, setAuthorshipError] = useState("");
   const [authorshipLoading, setAuthorshipLoading] = useState(false);
 
   // --- Input Handlers ---
-  // EN: Reset KWIC error/results when input changes
-  // JP: 入力変更時にKWICのエラー・結果をリセット
   const handleKwicInputChange = () => {
       setKwicError("");
       setKwicResults([]);
       setKwicSearchAttempted(false);
   };
   
-  // EN: Reset authorship error/results when input changes
-  // JP: 入力変更時に著者識別のエラー・結果をリセット
   const handleAuthorshipInputChange = () => {
     setAuthorshipError("");
     setAuthorshipResult(null);
   };
 
   // --- KWIC Search Handler ---
-  // EN: Perform KWIC search via API
-  // JP: API経由でKWIC検索を実行
   const handleKwicSearch = async () => {
     setKwicError("");
     setKwicResults([]);
     setKwicSearchAttempted(true);
     setKwicLoading(true);
 
-    // EN: Input validation
-    // JP: 入力値のバリデーション
     if (!url.trim()) {
-        setKwicError("Please provide a Wikipedia URL.");
+        setKwicError("Please provide a Web Page URL."); // Changed
         setKwicSearchAttempted(false); setKwicLoading(false); return;
     }
     if (!searchQuery.trim()) {
@@ -120,10 +112,8 @@ const App: React.FC = () => {
     }
 
     try {
-      // EN: Call KWIC search API
-      // JP: KWIC検索APIを呼び出し
       const response = await axios.post<KWICSearchResponse>(
-        "http://localhost:8080/api/search",
+        "http://localhost:8080/api/search", // Ensure this port matches your Flask server
         { 
             url: url.trim(), 
             query: searchQuery.trim(),
@@ -139,8 +129,6 @@ const App: React.FC = () => {
         setKwicError("");
       }
     } catch (err: any) {
-      // EN: Handle API error
-      // JP: APIエラー処理
       console.error("KWIC Search API error:", err);
       const errorMessage = err.response?.data?.error || err.message || "An unknown error occurred.";
       setKwicError(`Search failed: ${errorMessage}`);
@@ -151,17 +139,13 @@ const App: React.FC = () => {
   };
 
   // --- Authorship Analysis Handler ---
-  // EN: Perform authorship analysis via API
-  // JP: API経由で著者識別分析を実行
   const handleAuthorshipAnalysis = async () => {
     setAuthorshipError("");
     setAuthorshipResult(null);
     setAuthorshipLoading(true);
 
-    // EN: Input validation for URLs
-    // JP: URLのバリデーション
     if (!urlA.trim() || !urlB.trim()) {
-        setAuthorshipError("Please provide two Wikipedia URLs for authorship analysis.");
+        setAuthorshipError("Please provide two Web Page URLs for authorship analysis."); // Changed
         setAuthorshipLoading(false); return;
     }
 
@@ -175,19 +159,17 @@ const App: React.FC = () => {
     };
 
     if (!isValidUrl(urlA.trim())) {
-        setAuthorshipError("URL for Author A is invalid. Please enter a valid URL (e.g., https://en.wikipedia.org/wiki/PageName).");
+        setAuthorshipError("URL for Source A is invalid. Please enter a valid URL (e.g., https://example.com/article1)."); // Changed
         setAuthorshipLoading(false); return;
     }
     if (!isValidUrl(urlB.trim())) {
-        setAuthorshipError("URL for Author B is invalid. Please enter a valid URL (e.g., https://en.wikipedia.org/wiki/PageName).");
+        setAuthorshipError("URL for Source B is invalid. Please enter a valid URL (e.g., https://example.com/article2)."); // Changed
         setAuthorshipLoading(false); return;
     }
 
     try {
-        // EN: Call authorship analysis API
-        // JP: 著者識別APIを呼び出し
         const response = await axios.post<AuthorshipAnalysisResult>(
-            "http://localhost:8080/api/authorship",
+            "http://localhost:8080/api/authorship", // Ensure this port matches your Flask server
             { url_a: urlA.trim(), url_b: urlB.trim() },
             { headers: { "Content-Type": "application/json" } }
         );
@@ -199,8 +181,6 @@ const App: React.FC = () => {
             setAuthorshipError("");
         }
     } catch (err: any) {
-        // EN: Handle API error
-        // JP: APIエラー処理
         console.error("Authorship API error:", err);
         const errorMessage = err.response?.data?.error || err.message || "An unknown error occurred during authorship analysis.";
         setAuthorshipError(`Authorship analysis failed: ${errorMessage}`);
@@ -211,8 +191,6 @@ const App: React.FC = () => {
   };
   
   // --- KWIC Context Display Helper ---
-  // EN: Get context window for KWIC result
-  // JP: KWIC結果の文脈ウィンドウを取得
   const getDisplayedContext = (result: KWICSearchResult) => {
     const { context_words, matched_start, matched_end } = result;
     const displayStart = Math.max(0, matched_start - contextWindowSize);
@@ -239,33 +217,31 @@ const App: React.FC = () => {
   };
 
   // --- Main Render ---
-  // EN: Main UI rendering
-  // JP: メインUIのレンダリング
   return (
     <div style={{ fontFamily: 'Arial, sans-serif', maxWidth: '900px', margin: '20px auto', padding: '20px', color: '#333' }}>
-      {/* EN: Header / JP: ヘッダー */}
       <header style={{ textAlign: 'center', marginBottom: '30px' }}>
-        <h1 style={{ fontSize: '2.5em', color: '#2c3e50' }}>Wikipedia Text Tools</h1>
+        <h1 style={{ fontSize: '2.5em', color: '#2c3e50' }}>Web Page Text Tools</h1> {/* Changed Title */}
       </header>
 
-      {/* EN: KWIC Search Section / JP: KWIC検索セクション */}
       <section style={{ marginBottom: '40px', padding: '25px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
         <h2 style={{ marginTop: 0, borderBottom: '2px solid #3498db', paddingBottom: '10px', color: '#3498db' }}>KWIC Search (Key Word In Context)</h2>
+        <p style={{color: "#666", fontSize: "0.9em", marginBottom: '15px'}}>
+            Enter a public web page URL to search for keywords, POS tags, or entities within its main textual content. 
+            Results may vary based on website structure.
+        </p>
         
-        {/* EN: KWIC URL Input / JP: KWIC用URL入力 */}
         <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="kwic-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Wikipedia URL:</label>
+            <label htmlFor="kwic-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Web Page URL:</label> {/* Changed */}
             <input
               id="kwic-url"
               type="text"
               value={url}
               onChange={(e) => { setUrl(e.target.value); handleKwicInputChange(); }}
-              placeholder="e.g., https://en.wikipedia.org/wiki/Banana"
+              placeholder="e.g., https://example.com/some-article-page" // Changed
               style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}
             />
         </div>
 
-        {/* EN: KWIC Search Type and Query / JP: 検索タイプとクエリ入力 */}
         <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 200px', minWidth: '180px' }}>
                 <label htmlFor="search-type" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>Search Type:</label>
@@ -290,7 +266,7 @@ const App: React.FC = () => {
                     value={searchQuery}
                     onChange={(e) => { setSearchQuery(e.target.value); handleKwicInputChange(); }}
                     placeholder={
-                        searchType === 'token' ? "e.g., yellow fruit (max 5 words)" :
+                        searchType === 'token' ? "e.g., important concept (max 5 words)" : // Changed
                         searchType === 'pos' ? "e.g., VBZ" :
                         "e.g., GPE (Geo-Political Entity)"
                     }
@@ -299,7 +275,6 @@ const App: React.FC = () => {
             </div>
         </div>
         
-        {/* EN: KWIC Search Button / JP: 検索ボタン */}
         <div style={{ marginBottom: '20px' }}>
             <button 
                 onClick={handleKwicSearch} 
@@ -310,7 +285,6 @@ const App: React.FC = () => {
             </button>
         </div>
 
-        {/* EN: KWIC Display Settings / JP: 表示設定 */}
         <details style={{ marginBottom: '20px', border: '1px solid #eee', padding: '12px', borderRadius: '4px', background: '#fdfdfd' }}>
             <summary style={{ fontWeight: 'bold', cursor: 'pointer', color: '#2980b9', userSelect: 'none' }}>Display Settings</summary>
             <div style={{ marginTop: '15px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
@@ -337,10 +311,8 @@ const App: React.FC = () => {
             </div>
         </details>
         
-        {/* EN: KWIC Error Message / JP: エラーメッセージ */}
         {kwicError && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {kwicError}</p>}
         
-        {/* EN: KWIC Results List / JP: 検索結果リスト */}
         {kwicResults.length > 0 && !kwicLoading && (
           <div style={{ marginTop: '25px' }}>
               <h3 style={{ color: '#2980b9' }}>Search Results <span style={{fontSize: '0.8em', color: '#7f8c8d'}}>({kwicResults.length} matches)</span></h3>
@@ -348,66 +320,80 @@ const App: React.FC = () => {
                   {kwicResults.map((result, index) => {
                       const displayedItems = getDisplayedContext(result);
                       return (
-                        <li key={index} style={{ marginBottom: '18px', borderBottom: '1px dashed #eee', paddingBottom: '18px', lineHeight: '1.7', textAlign: 'left' }}>
-                            {displayedItems.map((item, itemIndex) => (
-                                <React.Fragment key={itemIndex}>
-                                    {item.type === 'word' ? (
-                                        item.isMatched ? (
-                                            <strong style={{ backgroundColor: highlightBgColor, color: highlightTextColor, padding: '2px 4px', borderRadius: '3px' }}>{item.content}</strong>
+                        <li 
+                            key={index} 
+                            style={{ 
+                                marginBottom: '18px', 
+                                borderBottom: '1px dashed #eee', 
+                                paddingBottom: '18px', 
+                                lineHeight: '1.7', 
+                                textAlign: 'left',
+                                display: 'flex',
+                                alignItems: 'flex-start'
+                            }}
+                        >
+                            <span style={{ marginRight: '10px', fontWeight: 'normal', color: '#555', minWidth: '25px', textAlign: 'right' }}>
+                                {index + 1}.
+                            </span>
+                            <div>
+                                {displayedItems.map((item, itemIndex) => (
+                                    <React.Fragment key={itemIndex}>
+                                        {item.type === 'word' ? (
+                                            item.isMatched ? (
+                                                <strong style={{ backgroundColor: highlightBgColor, color: highlightTextColor, padding: '2px 4px', borderRadius: '3px' }}>{item.content}</strong>
+                                            ) : (
+                                                item.content
+                                            )
                                         ) : (
-                                            item.content
-                                        )
-                                    ) : (
-                                        <span style={{color: '#7f8c8d', fontStyle: 'italic'}}>{item.content}</span>
-                                    )}
-                                    {(item.type === 'word' && itemIndex < displayedItems.length -1 && displayedItems[itemIndex+1].type === 'word') ? ' ' : ''}
-                                </React.Fragment>
-                            ))}
+                                            <span style={{color: '#7f8c8d', fontStyle: 'italic'}}>{item.content}</span>
+                                        )}
+                                        {(item.type === 'word' && itemIndex < displayedItems.length -1 && displayedItems[itemIndex+1].type === 'word') ? ' ' : ''}
+                                    </React.Fragment>
+                                ))}
+                            </div>
                         </li>
                       );
                   })}
               </ul>
           </div>
         )}
-        {/* EN: No results or initial message / JP: 結果なし・初期メッセージ */}
         {!kwicError && kwicResults.length === 0 && kwicSearchAttempted && !kwicLoading && (
            <p style={{ marginTop: '15px', color: '#7f8c8d', background: '#ecf0f1', padding: '10px', borderRadius: '4px' }}>No results found for "{searchQuery}" (Type: {searchType}).</p>
         )}
         {!kwicError && kwicResults.length === 0 && !kwicSearchAttempted && !kwicLoading && (
-           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter a Wikipedia URL and query to begin KWIC searching.</p>
+           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter a Web Page URL and query to begin KWIC searching.</p> // Changed
         )}
       </section>
 
-      {/* EN: Authorship Analysis Section / JP: 著者識別分析セクション */}
       <section style={{ padding: '25px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#f9f9f9' }}>
         <h2 style={{ marginTop: 0, borderBottom: '2px solid #27ae60', paddingBottom: '10px', color: '#27ae60' }}>Authorship Analysis</h2>
-        <p style={{color: "#555", fontSize: "0.95em", marginBottom: '20px'}}>Compare writing styles from two Wikipedia articles.</p>
+        <p style={{color: "#555", fontSize: "0.95em", marginBottom: '20px'}}>
+            Compare writing styles from two public web page articles. 
+            Analysis is more meaningful for pages with substantial, authored text.
+        </p>
         
-        {/* EN: Author A URL Input / JP: 著者AのURL入力 */}
         <div style={{ marginBottom: '15px' }}>
-            <label htmlFor="author-a-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>URL for Author A:</label>
+            <label htmlFor="author-a-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>URL for Source A:</label> {/* Changed */}
             <input
                 id="author-a-url"
                 type="text"
                 value={urlA}
                 onChange={(e) => { setUrlA(e.target.value); handleAuthorshipInputChange(); }}
-                placeholder="e.g., https://en.wikipedia.org/wiki/Plato"
+                placeholder="e.g., https://example.com/article-by-author-A" // Changed
                 style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}
             />
         </div>
-        {/* EN: Author B URL Input / JP: 著者BのURL入力 */}
         <div style={{ marginBottom: '20px' }}>
-            <label htmlFor="author-b-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>URL for Author B:</label>
+            <label htmlFor="author-b-url" style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>URL for Source B:</label> {/* Changed */}
             <input
                 id="author-b-url"
                 type="text"
                 value={urlB}
                 onChange={(e) => { setUrlB(e.target.value); handleAuthorshipInputChange(); }}
-                placeholder="e.g., https://en.wikipedia.org/wiki/Aristotle"
+                placeholder="e.g., https://example.com/another-article" // Changed
                 style={{ width: 'calc(100% - 22px)', padding: '10px', border: '1px solid #ccc', borderRadius: '4px' }}
             />
         </div>
-        {/* EN: Authorship Analysis Button / JP: 著者識別分析ボタン */}
         <button 
             onClick={handleAuthorshipAnalysis} 
             disabled={authorshipLoading || !urlA.trim() || !urlB.trim()} 
@@ -416,10 +402,8 @@ const App: React.FC = () => {
             {authorshipLoading ? 'Analyzing...' : 'Analyze Authorship'}
         </button>
 
-        {/* EN: Authorship Error Message / JP: エラーメッセージ */}
         {authorshipError && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {authorshipError}</p>}
 
-        {/* EN: Authorship Results / JP: 分析結果表示 */}
         {authorshipResult && !authorshipLoading && (
             <div style={{ marginTop: '25px' }}>
                 <h3 style={{color: '#16a085'}}>Analysis Results</h3>
@@ -440,13 +424,13 @@ const App: React.FC = () => {
                     <h4 style={{color: '#16a085'}}>Most Distinctive Words/N-grams (Top 10):</h4>
                     <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '15px' }}>
                         <div style={{flex: '1 1 45%', minWidth: '280px', marginBottom: '10px'}}>
-                            <strong>Author A (from <a href={urlA} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlA.split('/').pop() || urlA}</a>):</strong>
+                            <strong>Source A (from <a href={urlA} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlA.split('/').pop() || urlA}</a>):</strong> {/* Changed */}
                             <ul style={{ listStyleType: 'square', paddingLeft: '20px', background: '#fdfefe', border: '1px solid #eaeded', borderRadius: '4px', padding: '10px 10px 10px 30px', marginTop: '5px'}}>
                                 {authorshipResult.distinctive_words.AuthorA?.map((word, i) => <li key={`a-${i}`} style={{marginBottom: '3px'}}>{word}</li>) || <li>N/A</li>}
                             </ul>
                         </div>
                         <div style={{flex: '1 1 45%', minWidth: '280px'}}>
-                            <strong>Author B (from <a href={urlB} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlB.split('/').pop() || urlB}</a>):</strong>
+                            <strong>Source B (from <a href={urlB} target="_blank" rel="noopener noreferrer" style={{color: '#2980b9'}}>{urlB.split('/').pop() || urlB}</a>):</strong> {/* Changed */}
                             <ul style={{ listStyleType: 'square', paddingLeft: '20px', background: '#fdfefe', border: '1px solid #eaeded', borderRadius: '4px', padding: '10px 10px 10px 30px', marginTop: '5px'}}>
                                 {authorshipResult.distinctive_words.AuthorB?.map((word, i) => <li key={`b-${i}`} style={{marginBottom: '3px'}}>{word}</li>) || <li>N/A</li>}
                             </ul>
@@ -468,7 +452,7 @@ const App: React.FC = () => {
                                         borderRadius: '3px',
                                         background: pred.true_label === pred.predicted_label ? '#d4efdf' : '#f5b7b1'
                                     }}>
-                                        Predicted: {pred.predicted_label}
+                                        Predicted: {pred.predicted_label} 
                                     </span>
                                     <span style={{marginLeft: '10px', color: '#7f8c8d'}}>(True: {pred.true_label})</span>
                                 </p>
@@ -478,14 +462,15 @@ const App: React.FC = () => {
                 </div>
             </div>
         )}
-         {/* EN: Initial message for authorship analysis / JP: 著者識別の初期メッセージ */}
          {!authorshipError && !authorshipResult && !authorshipLoading && (
-           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter two Wikipedia URLs and click "Analyze Authorship" to view the analysis.</p>
+           <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter two Web Page URLs and click "Analyze Authorship" to view the analysis.</p> // Changed
         )}
       </section>
-      {/* EN: Footer / JP: フッター */}
       <footer style={{textAlign: 'center', marginTop: '40px', paddingTop: '20px', borderTop: '1px solid #eee', fontSize: '0.9em', color: '#7f8c8d'}}>
-        <p>Wikipedia Text Tools - KWIC & Authorship Analysis</p>
+        <p>Web Page Text Tools - KWIC & Authorship Analysis</p> {/* Changed */}
+        <p style={{fontSize: '0.8em', color: '#95a5a6'}}>
+            Please ensure you have the right to process content from the provided URLs. Results depend on website structure.
+        </p>
       </footer>
     </div>
   );
