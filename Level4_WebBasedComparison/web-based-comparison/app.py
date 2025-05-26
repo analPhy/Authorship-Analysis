@@ -220,20 +220,25 @@ def tokenize_mixed_for_authorship(text: str):
         except Exception as e_tok:
             logging.error(f"NLTK word_tokenize fallback failed: {e_tok}")
             return text.split()
-
+    # --- 句読点フィルタ用のセット（必要なら「、」「。」も追加） ---
+    _PUNCT_SKIP = {".", ",", "(", ")", "'"}
     try:
         lang = lang_detect(text)
     except Exception:
         lang = "en"
 
     if lang == "ja":
-        return [tok.surface for tok in _TAGGER(text)]
+       tokens = [tok.surface for tok in _TAGGER(text)]
     else:
         try:
-            return word_tokenize(text)
+            tokens = word_tokenize(text)
         except Exception as e_tok_en:
             logging.error(f"NLTK word_tokenize for English text failed: {e_tok_en}")
-            return text.split()
+            tokens = text.split()
+
+    # --- 句読点だけのトークンを除去 ---
+    tokens = [t for t in tokens if t not in _PUNCT_SKIP]
+    return tokens
 
 def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
     # EN: Build a dataset of sentences and labels for authorship analysis
