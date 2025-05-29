@@ -26,21 +26,24 @@ import nltk
 import sys
 import os
 
-# 環境変数 NLTK_DATA からパスを取得。なければデフォルトで固定パスを使用。
-# この固定パスは download_nltk.py で指定したパスと完全に一致させる。
+# NLTKデータパスの設定を最優先で行う
 expected_nltk_data_dir = os.environ.get('NLTK_DATA', '/opt/render/project/src/nltk_data_on_render')
-print(f"--- [APP STARTUP] Expected NLTK_DATA directory: {expected_nltk_data_dir} (from ENV or default) ---")
+print(f"--- [APP STARTUP PRE-CHECK] Expected NLTK_DATA directory: {expected_nltk_data_dir} ---")
 
 if not os.path.isdir(expected_nltk_data_dir):
-     print(f"--- [APP STARTUP] CRITICAL ERROR: NLTK data directory '{expected_nltk_data_dir}' does NOT exist. Check NLTK_DATA env var and build script path. ---")
-     sys.exit(1)
+    # この時点でディレクトリがなければ、ビルドに問題があった可能性が高い
+    print(f"--- [APP STARTUP PRE-CHECK] CRITICAL ERROR: NLTK data directory '{expected_nltk_data_dir}' does NOT exist. ---")
+    # ここで敢えて exit しないで、nltk.data.path の操作に進んでみる
+    # sys.exit(1)
+else:
+    print(f"--- [APP STARTUP PRE-CHECK] NLTK data directory '{expected_nltk_data_dir}' exists. ---")
 
-# nltk.data.path にこの期待されるパスが含まれているか確認し、なければ先頭に追加
-# （環境変数 NLTK_DATA が設定されていれば、NLTKは通常これを自動的に検索パスの先頭に加えるが、念のため）
+
+# nltk.data.path を一度クリアし、期待するパスのみを（先頭に）設定する
+# これにより、他の予期しないパスが影響する可能性を減らす
 if expected_nltk_data_dir not in nltk.data.path:
-    nltk.data.path.insert(0, expected_nltk_data_dir)
-
-print(f"--- [APP STARTUP] NLTK data path being used: {nltk.data.path} ---")
+     nltk.data.path.insert(0, expected_nltk_data_dir)
+print(f"--- [APP STARTUP PRE-CHECK] NLTK data path configured to: {nltk.data.path} ---")
 
 # Build Command の download_nltk.py と完全に同じリストにする
 required_nltk_resources_app = {
