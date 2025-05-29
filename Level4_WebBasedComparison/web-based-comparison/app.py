@@ -458,11 +458,13 @@ def kwic_search():
         if not target_entity_type_query or " " in target_entity_type_query:
             return jsonify({"error": "For Entity search, enter a single valid entity type."}), 400
         
-        raw_results_for_entity_sort = []
-        for ent_idx, ent in enumerate(doc_for_kwic.ents):
+        # 1. マッチするアイテムを全て収集し、必要な情報を付加
+        raw_results_for_entity_sort = [] 
+        logging.info(f"--- [ENTITY SEARCH] Collecting raw results for type '{target_entity_type_query}' ---")
+        for ent_idx, ent in enumerate(doc_for_kwic.ents): # doc_for_kwic は処理済みのspaCy Docオブジェクト
             if ent.label_.upper() == target_entity_type_query:
                 start_token_idx = ent.start
-                end_token_idx = ent.end
+                end_token_idx = ent.end 
                 item_match_len = end_token_idx - start_token_idx
 
                 start_context_idx = max(0, start_token_idx - backend_context_window_size)
@@ -474,7 +476,7 @@ def kwic_search():
                 # マッチしたエンティティ自体を正規化 (小文字化、句読点除去)
                 matched_entity_text_processed = remove_punctuation_from_token(matched_entity_text_original).lower()
                 
-                # (オプションとして) 直後の単語の情報も収集しておく
+                # (オプション) 直後の単語の情報も収集しておく (もし第2ソートキーで使いたければ)
                 following_word_1_processed = ""
                 idx_after_entity = ent.end 
                 if idx_after_entity < len(doc_for_kwic):
@@ -485,42 +487,52 @@ def kwic_search():
                     "context_words": context_doc_tokens,
                     "matched_start": matched_start_in_context,
                     "matched_end": matched_start_in_context + item_match_len,
-                    "original_text_index": start_token_idx, # エンティティの開始トークンインデックス
-                    "matched_entity_text_original": matched_entity_text_original, # 表示用
-                    "matched_entity_text_processed": matched_entity_text_processed, # 頻度計算・ソート用
-                    "following_word_1_processed": following_word_1_processed # 将来的な第二ソートキー用
+                    "original_text_index": start_token_idx, 
+                    "matched_entity_text_original": matched_entity_text_original,
+                    "matched_entity_text_processed": matched_entity_text_processed,
+                    "following_word_1_processed": following_word_1_processed 
                 })
         
+        logging.info(f"--- [ENTITY SEARCH] Collected {len(raw_results_for_entity_sort)} raw entity matches. ---")
+        # デバッグ用に収集したエンティティの一部を表示
+        # for i_debug, item_debug in enumerate(raw_results_for_entity_sort[:5]):
+        #    logging.info(f"  Raw Entity Item {i_debug}: Text='{item_debug['matched_entity_text_processed']}', OrigIdx={item_debug['original_text_index']}")
+
         if raw_results_for_entity_sort:
-            # 1. マッチしたエンティティ自体の「検索結果内での」出現頻度を計算
+            # 2. マッチしたエンティティ自体の「検索結果内での」出現頻度を計算
             entity_texts_in_results = [item['matched_entity_text_processed'] for item in raw_results_for_entity_sort if item['matched_entity_text_processed']]
             entity_frequencies_in_results = Counter(entity_texts_in_results)
+            logging.info(f"--- [ENTITY SEARCH] Frequencies of matched entities in results (Top 5): {entity_frequencies_in_results.most_common(5)} ---")
+            
             for item in raw_results_for_entity_sort:
                 item['matched_entity_freq_in_results'] = entity_frequencies_in_results.get(item['matched_entity_text_processed'], 0)
 
-            # (オプション) もし後続単語頻度も第二キーにしたい場合はここで計算・追加
+            # (オプション: もし後続単語頻度も第二キーにしたい場合はここで計算・追加)
             # all_following_words_in_entity_results = [item['following_word_1_processed'] for item in raw_results_for_entity_sort if item['following_word_1_processed']]
             # following_word_freq_in_entity_results = Counter(all_following_words_in_entity_results)
             # for item in raw_results_for_entity_sort:
             #     item['following_word_1_freq_in_results'] = following_word_freq_in_entity_results.get(item['following_word_1_processed'], 0)
 
-            # 2. ソート実行
+            # 3. ソート実行
             #    キー1: マッチしたエンティティ自体の検索結果内頻度 (降順)
             #    キー2: 元のテキストでの出現位置 (昇順)
-            #    (もし後続単語頻度もキーにするなら、ここに追加: -x.get('following_word_1_freq_in_results', 0) )
+            #    (もし後続単語頻度もキーにするなら、ソートキーのタプルに追加)
+            logging.info("--- [ENTITY SEARCH] Sorting results by 'matched_entity_freq_in_results' (desc) then 'original_text_index' (asc)... ---")
             raw_results_for_entity_sort.sort(key=lambda x: (
-                -x.get('matched_entity_freq_in_results', 0),
-                x.get('original_text_index', 0)
+                -x.get('matched_entity_freq_in_results', 0), # 最優先キー
+                # -x.get('following_word_1_freq_in_results', 0), # ← もし後続単語頻度もキーにする場合
+                x.get('original_text_index', 0)                # 第二（または第三）優先キー
             ))
-            results = raw_results_for_entity_sort
-            logging.info(f"Entity search results sorted by matched_entity_freq_in_results.")
-            # デバッグログ
-            logging.info("--- After Entity specific sort (first 5 items) ---")
+            results = raw_results_for_entity_sort # ソートされた結果を最終結果に
+            
+            # デバッグログ (ソート後の最初の数件)
+            logging.info("--- [ENTITY SEARCH] After sorting (first 5 items with freq) ---")
             for i_debug, item_debug in enumerate(results[:5]):
-                logging.info(f"  Item {i_debug}: Entity='{item_debug['matched_entity_text_processed']}'(freq={item_debug['matched_entity_freq_in_results']}), "
+                logging.info(f"  Item {i_debug}: Entity='{item_debug['matched_entity_text_processed']}' (Freq={item_debug.get('matched_entity_freq_in_results', 'N/A')}), "
+                             # f"NextWord='{item_debug['following_word_1_processed']}' (Freq={item_debug.get('following_word_1_freq_in_results', 'N/A')}), " # 後続単語頻度もキーにした場合
                              f"OrigIdx={item_debug['original_text_index']}")
         else:
-            results = []
+            results = [] # マッチがなければ空
         # --- Entity検索のロジックここまで ---
 
     # --- 共通の処理 (結果がない場合) ---
@@ -529,40 +541,30 @@ def kwic_search():
 
     # --- フロントエンドからの sort_method に基づく追加のソート (オプション) ---
     # sorted_results は、この時点で各検索タイプごとのデフォルトソートが適用されている
-    # もしフロントエンドが明示的に 'pos' (後続単語の品詞タグ頻度) や 'sequential' を指定してきた場合に限り、
-    # さらに並べ替えを行うか、何もしないか。
-    # 今回は、各検索タイプ固有のソートを優先し、この下のブロックは簡略化または削除も検討。
-    
-    # 以下のロジックは、各検索タイプ固有のソートを上書きしないように注意が必要。
-    # もし、フロントエンドから sort_method が送られてきて、それが現在の検索タイプの
-    # デフォルトソートと異なる場合にのみ、ここで処理する形にする。
-    
-    final_sorted_results = results # デフォルトは各検索タイプでソートされた結果
+    # (token検索は後続単語1頻度、pos検索はNNP頻度→後続単語1頻度、entity検索はエンティティ頻度)
+    final_sorted_results = results 
 
-    if sort_method == 'pos' and search_type != 'pos' and search_type != 'token': 
-        # Entity検索の結果を、後続単語の「品詞タグ」頻度でソートしたい場合 (現在のEntity検索のデフォルトソートとは異なる)
-        # Token検索は既に専用ソート済み、POS検索も専用ソート済みなので、ここではEntityのみが対象
-        logging.info(f"Applying 'following word POS tag frequency' sort to ENTITY search results as per sort_method='pos'.")
-        pos_groups_for_entity = {}
-        for res_item in results: # results は Entity検索でエンティティ頻度ソートされたもの
+    # もし、フロントエンドから明示的に 'pos' ソート (後続単語の「品詞タグ」頻度) が要求され、
+    # かつ、現在の検索タイプが 'entity' の場合（まだこのソートが適用されていない場合）にのみ実行
+    if sort_method == 'pos' and search_type == 'entity': 
+        logging.info(f"--- [ENTITY SEARCH] Applying 'following word POS tag frequency' sort as per sort_method='pos' for entity results. ---")
+        pos_groups_for_entity_alt_sort = {}
+        for res_item in results: # results は Entity検索でエンティティ自体の頻度でソートされたもの
             item_start_idx_in_doc = res_item.get("original_text_index")
-            item_match_len = res_item["matched_end"] - res_item["matched_start"]
+            item_match_len_val = res_item["matched_end"] - res_item["matched_start"]
             if item_start_idx_in_doc is not None:
-                next_token_global_idx = item_start_idx_in_doc + item_match_len
+                next_token_global_idx = item_start_idx_in_doc + item_match_len_val
                 if next_token_global_idx < len(doc_for_kwic):
                     next_word_token_obj = doc_for_kwic[next_token_global_idx]
-                    pos_tag = next_word_token_obj.tag_
-                    pos_groups_for_entity.setdefault(pos_tag, []).append(res_item)
-        if pos_groups_for_entity:
+                    pos_tag = next_word_token_obj.tag_ # 品詞タグを取得
+                    pos_groups_for_entity_alt_sort.setdefault(pos_tag, []).append(res_item)
+        if pos_groups_for_entity_alt_sort:
             temp_list_entity_alt_sort = []
-            for tag, group_items in sorted(pos_groups_for_entity.items(), key=lambda x: (-len(x[1]), x[0])):
+            for tag, group_items in sorted(pos_groups_for_entity_alt_sort.items(), key=lambda x: (-len(x[1]), x[0])):
                 temp_list_entity_alt_sort.extend(sorted(group_items, key=lambda x: x.get("original_text_index", 0)))
             final_sorted_results = temp_list_entity_alt_sort
-    elif sort_method == 'sequential' and (search_type == 'pos' or search_type == 'entity'):
-        # もしPOS検索やEntity検索で、明示的に「出現順」に戻したい場合
-        # (ただし、それぞれのブロック内で既に original_text_index でソートされている部分があるので、
-        #  この分岐はあまり意味がないかもしれない。出現順がデフォルトになるように調整した方が良いかも)
-        logging.info(f"Reverting to sequential (original text index) order for '{search_type}' search results as per sort_method='sequential'.")
+    elif sort_method == 'sequential' and search_type != 'token': # Token以外で出現順に戻したい場合
+        logging.info(f"--- Sorting '{search_type}' results by original text index as per sort_method='sequential'. ---")
         final_sorted_results.sort(key=lambda x: x.get('original_text_index', 0))
 
 
