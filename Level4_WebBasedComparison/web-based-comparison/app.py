@@ -441,13 +441,22 @@ def kwic_search():
                 pattern_groups[pattern] = []
             pattern_groups[pattern].append(result)
 
-    # Sort patterns by frequency (number of occurrences)
-    sorted_patterns = sorted(pattern_groups.items(), key=lambda x: len(x[1]), reverse=True)
-
-    # Flatten the grouped results while maintaining group order
+    # First group by frequency and first occurrence
+    freq_and_pos_groups = {}
+    for pattern, group in pattern_groups.items():
+        freq = len(group)
+        first_pos = min(result["matched_start"] for result in group)
+        if freq not in freq_and_pos_groups:
+            freq_and_pos_groups[freq] = []
+        freq_and_pos_groups[freq].append((first_pos, pattern, group))
+    
+    # Sort by frequency (descending) and position (ascending)
     sorted_results = []
-    for pattern, group in sorted_patterns:
-        sorted_results.extend(group)
+    for freq in sorted(freq_and_pos_groups.keys(), reverse=True):
+        # Sort groups of same frequency by their first occurrence position
+        groups = sorted(freq_and_pos_groups[freq], key=lambda x: x[0])
+        for _, _, group in groups:
+            sorted_results.extend(group)
         
     logging.info(f"Found {len(results)} occurrences for query '{query_input}' (Type: {search_type}) in text from {url}")
     return jsonify({"results": sorted_results})
