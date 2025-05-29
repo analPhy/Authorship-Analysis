@@ -26,13 +26,19 @@ import nltk
 import sys
 import os
 
-# Render環境でNLTK_DATA環境変数が設定されていることを期待する
-# nltk.data.path に /opt/render/nltk_data が含まれているか確認
-nltk_data_dir_runtime = os.environ.get('NLTK_DATA', '/opt/render/project/src/nltk_data_render')
-if nltk_data_dir_runtime not in nltk.data.path:
-    nltk.data.path.insert(0, nltk_data_dir_runtime)
+# 環境変数 NLTK_DATA からパスを取得。なければデフォルトで固定パスを使用。
+expected_nltk_data_dir = os.environ.get('NLTK_DATA', '/opt/render/project/src/nltk_data_on_render')
+print(f"--- [APP STARTUP] Expected NLTK_DATA directory: {expected_nltk_data_dir} (from ENV or default) ---")
 
-print(f"--- [APP STARTUP] NLTK data path: {nltk.data.path} ---")
+# nltk.data.path にこの期待されるパスが含まれているか確認し、なければ先頭に追加
+if not os.path.isdir(expected_nltk_data_dir):
+     print(f"--- [APP STARTUP] CRITICAL ERROR: NLTK data directory '{expected_nltk_data_dir}' does NOT exist. ---")
+     sys.exit(1)
+
+if expected_nltk_data_dir not in nltk.data.path:
+    nltk.data.path.insert(0, expected_nltk_data_dir)
+
+print(f"--- [APP STARTUP] NLTK data path being used: {nltk.data.path} ---")
 
 # Build Command の download_nltk.py と完全に同じリストにする
 required_nltk_resources_app = {
