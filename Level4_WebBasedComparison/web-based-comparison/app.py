@@ -180,7 +180,7 @@ def kwic_search():
         return jsonify({"error": "Enter 1 to 5 words for the target phrase."}), 400
 
     # Map search_type to internal mode
-    type_map = {'token': '1', 'pos': '2', 'entity': '3'}
+    type_map = {'token': '1', 'pos': '3', 'entity': '2'}  # ←ここを修正
     if search_type not in type_map:
         return jsonify({"error": "Invalid mode. Please choose 'token', 'pos', or 'entity'."}), 400
     mode = type_map[search_type]
