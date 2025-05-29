@@ -19,6 +19,25 @@ import logging
 import sys
 import string
 
+import nltk
+
+try:
+    # 必要なリソースが既に存在するか確認 (省略可能だが効率的)
+    nltk.data.find('taggers/averaged_perceptron_tagger_eng')
+except nltk.downloader.DownloadError:
+    print("Downloading NLTK resource 'averaged_perceptron_tagger_eng'...")
+    nltk.download('averaged_perceptron_tagger_eng', quiet=True) # quiet=Trueでダウンロードログを抑制
+except LookupError: # こちらの例外も補足した方が良い場合がある
+    print("NLTK resource 'averaged_perceptron_tagger_eng' not found, downloading...")
+    nltk.download('averaged_perceptron_tagger_eng', quiet=True)
+
+# 他にも必要なNLTKリソースがあれば同様に追加
+# 例:
+# try:
+#     nltk.data.find('tokenizers/punkt')
+# except LookupError:
+#     nltk.download('punkt', quiet=True)
+
 # --- NEW: spaCy for more accurate NER (minimal addition) ---
 try:
     import spacy
@@ -27,6 +46,23 @@ try:
 except Exception as e_spa:
     _SPACY_NLP = None
     logging.warning(f"spaCy not available or model load failed: {e_spa}. Falling back to NLTK NER.")
+
+    import subprocess
+
+model_name = "en_core_web_sm" # 使用したいモデル名
+
+try:
+    spacy.load(model_name)
+    print(f"Model '{model_name}' already installed and loaded.")
+except OSError:
+    print(f"Model '{model_name}' not found. Downloading and installing...")
+    try:
+        subprocess.check_call(['python', '-m', 'spacy', 'download', model_name])
+        # subprocess.check_call([sys.executable, '-m', 'spacy', 'download', model_name]) # より確実な場合
+        spacy.load(model_name) # ダウンロード後にロードを試みる
+        print(f"Model '{model_name}' downloaded and loaded successfully.")
+    except Exception as e:
+        print(f"Error downloading or loading model '{model_name}': {e}")
 
 # --- Authorship Attribution Imports ---
 # EN: Import scikit-learn modules for authorship analysis
