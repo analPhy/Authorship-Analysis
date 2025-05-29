@@ -21,51 +21,17 @@ import string
 
 import nltk
 
-print(f"NLTK data path: {nltk.data.path}") # 現在のNLTK検索パスを確認
-
-# 必須NLTKリソース
+# ダウンロードが必要なNLTKリソースのリスト
+# (キー: nltk.data.find で使用するパス, 値: nltk.download で使用するID)
 required_nltk_resources = {
-    "taggers/averaged_perceptron_tagger_eng": "averaged_perceptron_tagger_eng", # nltk.pos_tag() が要求するリソース
+    "taggers/averaged_perceptron_tagger": "averaged_perceptron_tagger",
     "tokenizers/punkt": "punkt",
     "corpora/words": "words",
     "chunkers/maxent_ne_chunker": "maxent_ne_chunker",
-    "chunkers/maxent_ne_chunker_tab": "maxent_ne_chunker_tab"
+    "chunkers/maxent_ne_chunker_tab": "maxent_ne_chunker_tab", # ログにあったもの
+    # エラーで 'averaged_perceptron_tagger_eng' を要求された場合は以下を試すか、上記を置き換える
+    # "taggers/averaged_perceptron_tagger_eng": "averaged_perceptron_tagger_eng",
 }
-all_resources_available = True
-
-print("Checking NLTK resources availability...")
-for resource_path, download_id in required_nltk_resources.items():
-    try:
-        nltk.data.find(resource_path)
-        print(f"  [FOUND] NLTK resource: {download_id} (Path: {resource_path})")
-    except LookupError:
-        print(f"  [CRITICAL NOT FOUND] NLTK resource: {download_id} (Path: {resource_path})")
-        all_resources_available = False
-
-if not all_resources_available:
-    print("CRITICAL ERROR: Not all required NLTK resources were found after the build process.")
-    print("Please ensure all NLTK resources are downloaded in the Build Command.")
-    print("Exiting application.")
-    sys.exit(1) # リソースが不足していればアプリケーションを起動させない
-else:
-    print("All required NLTK resources are available.")
-
-# spaCyモデルのロード確認 (同様に起動時に確認)
-try:
-    import spacy
-    _SPACY_NLP = spacy.load("en_core_web_sm")
-    print("spaCy model 'en_core_web_sm' loaded successfully.")
-except OSError:
-    print("CRITICAL ERROR: spaCy model 'en_core_web_sm' not found.")
-    print("Please ensure the spaCy model is downloaded in the Build Command.")
-    print("Exiting application.")
-    sys.exit(1)
-except Exception as e:
-    print(f"An unexpected error occurred while loading spaCy model: {e}")
-    sys.exit(1)
-
-
-
 
 all_resources_found = True
 for resource_path, download_id in required_nltk_resources.items():
@@ -92,8 +58,16 @@ if not all_resources_found:
     # アプリケーションを正常に動作させられない場合はここで終了させることも検討
     # sys.exit(1)
 
+# --- NEW: spaCy for more accurate NER (minimal addition) ---
+try:
+    import spacy
+    _SPACY_NLP = spacy.load("en_core_web_sm")
+    logging.info("spaCy 'en_core_web_sm' model loaded for NER.")
+except Exception as e_spa:
+    _SPACY_NLP = None
+    logging.warning(f"spaCy not available or model load failed: {e_spa}. Falling back to NLTK NER.")
 
-import subprocess
+    import subprocess
 
 model_name = "en_core_web_sm" # 使用したいモデル名
 
