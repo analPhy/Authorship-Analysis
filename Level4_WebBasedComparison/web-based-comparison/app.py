@@ -28,7 +28,7 @@ import os
 
 # Render環境でNLTK_DATA環境変数が設定されていることを期待する
 # nltk.data.path に /opt/render/nltk_data が含まれているか確認
-nltk_data_dir_runtime = os.environ.get('NLTK_DATA', '/opt/render/nltk_data')
+nltk_data_dir_runtime = os.environ.get('NLTK_DATA', '/opt/render/project/src/nltk_data_render')
 if nltk_data_dir_runtime not in nltk.data.path:
     nltk.data.path.insert(0, nltk_data_dir_runtime)
 
