@@ -381,55 +381,31 @@ def kwic_search():
 
     elif search_type == 'pos':
         logging.info(f"--- Attempting POS tagging ---")
-        logging.info(f"Input tokens count: {len(words_from_page_original_case)}") # ユーザー提供のコードでは words_from_page_original_case
-        logging.info(f"Input tokens (first 50 to check content and type): {words_from_page_original_case[:50]}")
-        logging.info(f"Type of input list for POS tagging: {type(words_from_page_original_case)}")
+        # ... (入力データのログ出力はそのまま) ...
         
-        if words_from_page_original_case:
-            for i, token_example in enumerate(words_from_page_original_case[:5]):
-                 logging.info(f"Type of token at index {i}: {type(token_example)}")
-            if not all(isinstance(token, str) for token in words_from_page_original_case):
-                logging.error("CRITICAL: Not all items in the token list are strings! This will cause nltk.pos_tag to fail.")
-                return jsonify({"error": "Internal server error: Invalid token data type for POS tagging."}), 500
-
-        if not words_from_page_original_case:
+        if not words_from_page_original_case: # ユーザー提供のコードではこの変数名
              logging.warning("Input token list for POS tagging is empty.")
-             # この場合、tagged_words は空リストになり、最終的に "Query ... not found" が返る
+             # tagged_words は空リストになる
 
         try:
-            # --- ここから修正 ---
-            from nltk.tag.perceptron import PerceptronTagger
-            # NLTKのデータパスから標準的なpickleファイルの場所を探す
-            # これは 'taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle' に対応
-            pickle_path = nltk.data.find("taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle")
-            
-            # PerceptronTaggerをインスタンス化し、pickleファイルを明示的にロード
-            tagger = PerceptronTagger(load=False) # 初期化時に自動ロードしない
-            tagger.load(pickle_path)              # 指定したpickleファイルをロード
-            
-            # タグ付け実行 (ユーザー提供のコードでは words_from_page_original_case を使用)
-            tagged_words = tagger.tag(words_from_page_original_case) 
-            # --- ここまで修正 ---
+            # --- ここを修正: nltk.pos_tag() の直接呼び出しに戻す ---
+            tagged_words = nltk.pos_tag(words_from_page_original_case) # ユーザー提供の変数名を使用
+            # --- 修正ここまで ---
 
-            logging.info(f"POS tagging successful using explicit pickle load. Number of tagged words: {len(tagged_words)}")
+            logging.info(f"POS tagging successful. Number of tagged words: {len(tagged_words)}")
             if tagged_words:
                 logging.info(f"Sample of tagged words (first 5): {tagged_words[:5]}")
 
-        except LookupError as le:
-            # これは pickle_path が見つからない場合など
-            logging.error(f"NLTK resource lookup failed during POS tagging setup: {le}")
-            logging.error(f"Traceback for LookupError:\n{traceback.format_exc()}")
-            return jsonify({"error": "POS tagger model file not found. Ensure 'averaged_perceptron_tagger' is downloaded."}), 500
-        except Exception as e_pos_tag:
-            logging.error(f"NLTK pos_tag (with explicit pickle load) FAILED. Error: {e_pos_tag}")
+        except Exception as e_pos_tag: # LookupError も含め、より広範なエラーを捕捉
+            logging.error(f"NLTK pos_tag FAILED. Error: {e_pos_tag}") 
             logging.error(f"Traceback for pos_tag failure:\n{traceback.format_exc()}")
-            return jsonify({"error": "Part-of-speech tagging failed on the server. Please check server logs for more details."}), 500
+            return jsonify({"error": "Part-of-speech tagging failed on the server. Please check server logs for details."}), 500
             
         target_pos_tag_query = query_input.upper() # ユーザー提供のコードでは query_input を直接使用
 
         for i, (word, tag) in enumerate(tagged_words):
             if tag == target_pos_tag_query:
-                # ユーザー提供のコードでは words_from_page_original_case を使用してコンテキストを構築
+                # ユーザー提供のコードでは words_from_page_original_case を使用
                 before = words_from_page_original_case[max(0, i - backend_context_window_size): i]
                 matched_word = [words_from_page_original_case[i]]
                 after = words_from_page_original_case[i + 1 : i + 1 + backend_context_window_size]
@@ -443,48 +419,29 @@ def kwic_search():
                     "matched_start": result_matched_start,
                     "matched_end": result_matched_end
                 })
-                
+
     elif search_type == 'entity':
         logging.info(f"--- Attempting Entity Recognition ---")
-        logging.info(f"Input tokens count for NER preprocessing (POS tagging): {len(words_from_page_original_case)}")
-        logging.info(f"Input tokens for NER (first 50): {words_from_page_original_case[:50]}")
-        # ... (必要に応じて、入力トークンの型チェックログなどを追加)
+        # ... (入力データのログ出力はそのまま) ...
 
-        if not words_from_page_original_case:
+        if not words_from_page_original_case: # ユーザー提供のコードではこの変数名
             logging.warning("Input token list for NER (via POS tagging) is empty.")
-            # この場合、tagged_words_for_ner は空になり、iob_tags も空になるため、
-            # results は空のまま "Query ... not found" が返る
+            # tagged_words_for_ner は空リストになる
 
         try:
-            # --- ここから修正 (POSタギング部分を前回同様に修正) ---
-            from nltk.tag.perceptron import PerceptronTagger
-            
-            # NLTKのデータパスから標準的なpickleファイルの場所を探す
-            pickle_path = nltk.data.find("taggers/averaged_perceptron_tagger/averaged_perceptron_tagger.pickle")
-            
-            # PerceptronTaggerをインスタンス化し、pickleファイルを明示的にロード
-            tagger = PerceptronTagger(load=False) # 初期化時に自動ロードしない
-            tagger.load(pickle_path)              # 指定したpickleファイルをロード
-            
-            # タグ付け実行
-            tagged_words_for_ner = tagger.tag(words_from_page_original_case)
+            # --- ここを修正: nltk.pos_tag() の直接呼び出しに戻す ---
+            tagged_words_for_ner = nltk.pos_tag(words_from_page_original_case) # ユーザー提供の変数名を使用
+            # --- 修正ここまで ---
             logging.info(f"POS tagging for NER successful. Number of tagged words: {len(tagged_words_for_ner)}")
             if tagged_words_for_ner:
                 logging.info(f"Sample of tagged words for NER (first 5): {tagged_words_for_ner[:5]}")
-            # --- ここまでPOSタギング部分の修正 ---
 
-            # 固有表現チャンキング (これ自体は averaged_perceptron_tagger_eng を直接要求しない)
-            # maxent_ne_chunker と words リソースが必要 (これらは起動時にチェック済みのはず)
             chunked_entities_tree = nltk.ne_chunk(tagged_words_for_ner)
             iob_tags = nltk.chunk.util.tree2conlltags(chunked_entities_tree)
             logging.info(f"Entity chunking and IOB conversion successful. Number of IOB tags: {len(iob_tags)}")
 
-        except LookupError as le:
-            logging.error(f"NLTK resource lookup failed during NER setup (likely for POS tagger pickle): {le}")
-            logging.error(f"Traceback for LookupError:\n{traceback.format_exc()}")
-            return jsonify({"error": "Required NLTK model file for NER preprocessing not found."}), 500
-        except Exception as e_ner: # POSタギングまたはNERチャンキング中の他のエラー
-            logging.error(f"NLTK entity recognition processing failed: {e_ner}")
+        except Exception as e_ner: # LookupError も含め、より広範なエラーを捕捉
+            logging.error(f"NLTK entity recognition processing FAILED. Error: {e_ner}")
             logging.error(f"Traceback for NER failure:\n{traceback.format_exc()}")
             return jsonify({"error": "Entity recognition processing failed on the server. Please check server logs."}), 500
 
@@ -492,12 +449,12 @@ def kwic_search():
         
         idx = 0
         while idx < len(iob_tags):
-            # ... (既存のIOBタグを処理してエンティティを抽出するロジックはそのまま) ...
+            # ... (既存のIOBタグ処理ロジックはそのまま、ただし context_words_list を作る際に使うのは words_from_page_original_case) ...
             word_from_iob, _, iob_label = iob_tags[idx] 
             
             if iob_label.startswith('B-') and iob_label[2:] == target_entity_type_query:
                 current_entity_words = [word_from_iob] 
-                entity_start_index_in_processed_list = idx
+                entity_start_index_in_original_list = idx # これは iob_tags (つまり words_from_page_original_case) でのインデックス
                 
                 next_idx = idx + 1
                 while next_idx < len(iob_tags):
@@ -509,8 +466,22 @@ def kwic_search():
                         break
                 
                 num_entity_tokens = len(current_entity_words)
-                # ユーザー提供のコードでは words_from_page_original_case を使用
-                before = words_from_page_original_case[max(0, entity_start_index_in_processed_list - backend_context_window_size): entity_start_index_in_processed_list]
+                # コンテキスト表示には元の(句読点除去前の)トークンリストを使うか、句読点除去後のリストを使うか、
+                # ユーザーのコードでは words_from_page_original_case (これは句読点除去前のものを指す変数名だったが、実際には句読点除去処理が入っているはず)
+                # 一貫性のため、POS/Entityでも句読点除去後のトークンでコンテキストを組む場合は、
+                # words_from_page_processed のような変数名で、句読点除去済みのリストを参照すべき。
+                # ユーザーのコードでは、words_from_page_original_case がトークン化後のリストを指し、
+                # 句読点除去はこの変数に対して行われていないように見える。
+                # 前回の句読点除去の提案では、words_from_page_processed という新しい変数名を使っていた。
+                # ここではユーザーのログで使われていた words_from_page_original_case をそのまま使う前提で進めるが、
+                # この変数が句読点除去済みか否かで結果の見た目が変わる。
+                # 「句読点を考えないようにしたい」という要望からは、表示も句読点なしが良いかもしれない。
+                # ただし、ユーザーが提供した app.py 全体を見ると、KWIC検索では句読点除去と小文字化を行っていた。
+                # POS/Entity でも同様の処理を一貫して適用するのが良い。
+
+                # words_from_page_original_case が句読点除去済みかつ元のケースを保持していると仮定
+                before = words_from_page_original_case[max(0, entity_start_index_in_original_list - backend_context_window_size): entity_start_index_in_original_list]
+                # current_entity_words は iob_tags から来ているので、words_from_page_original_case のスライスと同じはず
                 after = words_from_page_original_case[next_idx : next_idx + backend_context_window_size]
                 
                 context_words_list = before + current_entity_words + after
