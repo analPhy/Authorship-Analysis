@@ -4,6 +4,7 @@
 # --- Imports ---
 # EN: Import necessary libraries for web server, text processing, ML, etc.
 # JP: Webサーバー、テキスト処理、機械学習などに必要なライブラリをインポート
+from collections import Counter
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 # import shutil
@@ -278,233 +279,221 @@ def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len:
 
 # === API Endpoints ===
 
+# app.py (kwic_search 関数 および関連部分の修正)
+
+# ... (既存のインポート、PUNCTUATION_SET, remove_punctuation_from_token, preprocess_tokens_for_search の定義は変更なし) ...
+# ... (他の関数定義も変更なし) ...
+
 @app.route('/api/search', methods=['POST'])
 def kwic_search():
-    # EN: KWIC search API endpoint
-    # JP: KWIC検索APIエンドポイント
     data = request.json
     url = data.get('url', '').strip()
-    query_input = data.get('query', '').strip()
+    query_input = data.get('query', '').strip() # ユーザーからの生の検索クエリ
     search_type = data.get('type', 'token').strip().lower()
 
-    logging.info(f"Received KWIC search request. URL: {url}, Query: '{query_input}', Type: {search_type}")
+    logging.info(f"Received KWIC search request. URL: {url}, Raw Query: '{query_input}', Type: {search_type}")
 
-    # EN: Input validation
-    # JP: 入力値のバリデーション
+    # --- URLと基本的なクエリのバリデーション (変更なし) ---
     if not url:
         logging.warning("KWIC search request missing URL.")
-        return jsonify({"error": "Please provide a Wikipedia URL."}), 400
+        # メッセージは get_text_from_general_url に合わせて修正しても良い
+        return jsonify({"error": "Please provide a Web Page URL."}), 400
     try:
         parsed_url = urlparse(url)
         if parsed_url.scheme not in ['http', 'https']:
-            logging.warning(f"Invalid URL scheme for KWIC search: {url}")
+            logging.warning(f"Invalid URL scheme: {url}")
             return jsonify({"error": "Invalid URL scheme. Only http or https are allowed."}), 400
-        if not parsed_url.hostname:
-             logging.warning(f"Invalid URL hostname for KWIC search: {url}")
-             return jsonify({"error": "Invalid URL hostname."}), 400
+        if not parsed_url.hostname: # or is_restricted_hostname(parsed_url.hostname) from previous general URL suggestion
+             logging.warning(f"Invalid or restricted URL hostname: {url}")
+             return jsonify({"error": "Invalid or restricted URL hostname."}), 400
     except ValueError:
-         logging.warning(f"Invalid URL format for KWIC search: {url}")
+         logging.warning(f"Invalid URL format: {url}")
          return jsonify({"error": "Invalid URL format."}), 400
     except Exception as e:
-         logging.error(f"An unexpected error during URL parsing for KWIC search: {e}\n{traceback.format_exc()}")
-         return jsonify({"error": "An unexpected error occurred during URL validation."}), 500
+         logging.error(f"Unexpected URL parsing error: {e}\n{traceback.format_exc()}")
+         return jsonify({"error": "Unexpected error during URL validation."}), 500
 
     if not query_input:
         logging.warning("KWIC search request missing query.")
         return jsonify({"error": "Please provide a search query."}), 400
+    # --- ここまでバリデーション ---
 
-    # EN: Prepare query for each search type
-    # JP: 検索タイプごとにクエリを準備
-    target_tokens = [] # Initialize for token search
-    if search_type == 'token':
-        target_tokens = query_input.split()
-        if not 1 <= len(target_tokens) <= 5:
-            logging.warning(f"Invalid token query length: {query_input} (Length: {len(target_tokens)})")
-            return jsonify({"error": "For token search, please enter one to five words."}), 400
-    elif search_type in ['pos', 'entity']:
-        if " " in query_input or not query_input:
-            logging.warning(f"Invalid {search_type} query: '{query_input}'. Should be a single tag/type.")
-            return jsonify({"error": f"For {search_type} search, please enter a single valid tag/type (no spaces)."}), 400
-    else:
-        logging.warning(f"Invalid search_type: {search_type}")
-        return jsonify({"error": f"Invalid search type: {search_type}. Supported types are 'token', 'pos', 'entity'."}), 400
-
-    words_from_page_original_case = []
+    # --- ページからテキストを取得し、トークン化し、句読点除去 ---
+    # この処理は全ての検索タイプで必要になる可能性があるため、分岐の前に行う
     try:
+        # get_text_from_url_for_kwic を使うか、汎用化された get_text_from_general_url を使うか選択
+        # ここではユーザーが提供したコードに合わせて get_text_from_url_for_kwic を使用
         raw_text = get_text_from_url_for_kwic(url)
         text_cleaned = clean_text_for_kwic(raw_text)
-        if text_cleaned:
-            try:
-                words_from_page_original_case = word_tokenize(text_cleaned)
-            except Exception as e_tokenize:
-                logging.error(f"Failed to tokenize text for KWIC search (URL: {url}): {e_tokenize}\n{traceback.format_exc()}")
-                return jsonify({"error": "Text tokenization failed on the server."}), 500
-    except ValueError as e:
+        
+        if not text_cleaned:
+            logging.info(f"No text content extracted from URL: {url}")
+            return jsonify({"results": [], "error": "Could not extract text content from the URL."}), 200
+
+        initial_tokens_from_page = word_tokenize(text_cleaned)
+        # これが検索対象となる、句読点除去済みのページのトークンリスト
+        words_from_page_processed = preprocess_tokens_for_search(initial_tokens_from_page) 
+
+        if not words_from_page_processed:
+            logging.info(f"No searchable tokens after processing for URL: {url}")
+            return jsonify({"results": [], "error": "No searchable words found in the URL after processing."}), 200
+
+    except ValueError as e: # エラーメッセージを get_text_from_url_for_kwic から受け取る
         logging.warning(f"Error during URL processing for KWIC search {url}: {e}")
-        return jsonify({"error": f"{e}"}), 400
+        return jsonify({"error": str(e)}), 400 # str(e) でエラーメッセージをそのまま返す
     except Exception as e:
-         logging.error(f"An unexpected server error during URL processing for KWIC search {url}: {e}\n{traceback.format_exc()}")
-         return jsonify({"error": "An unexpected server error occurred during URL processing."}), 500
+        logging.error(f"Unexpected server error during URL/text processing: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": "An unexpected server error occurred during URL processing."}), 500
+    # --- ここまでで words_from_page_processed が準備完了 ---
 
-    if not words_from_page_original_case:
-         logging.info(f"No searchable text available for URL (KWIC search): {url}")
-         return jsonify({
-             "results": [],
-             "error": f"Could not extract searchable text from the provided URL."
-         }), 200
+    results = [] # 最終的な検索結果リスト
+    backend_context_window_size = 10 # これは変更なし
 
-    results = []
-    backend_context_window_size = 10
-
-    # EN: KWIC search logic for each type
-    # JP: 各検索タイプごとのKWIC検索ロジック
     if search_type == 'token':
-        words_from_page_lower = [w.lower() for w in words_from_page_original_case]
-        target_token_list_lower = [word.lower() for word in target_tokens]
+        # --- 検索クエリの準備 (句読点除去とバリデーション) ---
+        raw_target_tokens = query_input.split()
+        target_tokens_processed = preprocess_tokens_for_search(raw_target_tokens) # ★★★ target_tokens_processed をここで定義 ★★★
+        
+        if not target_tokens_processed:
+            logging.warning(f"Token query '{query_input}' became empty after punctuation removal.")
+            return jsonify({"error": "Query became empty after removing punctuation. Please provide a query with more than just punctuation."}), 400
+        
+        if not 1 <= len(target_tokens_processed) <= 5:
+            logging.warning(f"Invalid token query length after punctuation removal: {target_tokens_processed} (Original: '{query_input}')")
+            return jsonify({"error": "For token search, please enter one to five words (after punctuation removal)."}), 400
+        # --- ここまで検索クエリ準備完了 ---
+
+        # --- トークン検索とソートロジック (前回提案通り) ---
+        words_from_page_lower = [w.lower() for w in words_from_page_processed]
+        target_token_list_lower = [word.lower() for word in target_tokens_processed] # 正しく参照
         num_target_tokens = len(target_token_list_lower)
+
+        temp_results_for_sorting = []
+        all_observed_following_words = []
 
         for i in range(len(words_from_page_lower) - num_target_tokens + 1):
             if words_from_page_lower[i : i + num_target_tokens] == target_token_list_lower:
-                before = words_from_page_original_case[max(0, i - backend_context_window_size): i]
-                matched_segment = words_from_page_original_case[i : i + num_target_tokens]
-                after = words_from_page_original_case[i + num_target_tokens : i + num_target_tokens + backend_context_window_size]
-                
+                before = words_from_page_processed[max(0, i - backend_context_window_size): i]
+                matched_segment = words_from_page_processed[i : i + num_target_tokens]
+                after = words_from_page_processed[i + num_target_tokens : i + num_target_tokens + backend_context_window_size]
                 context_words_list = before + matched_segment + after
-                result_matched_start = len(before)
-                result_matched_end = result_matched_start + num_target_tokens
                 
-                results.append({
+                current_following_word = ""
+                following_word_index = i + num_target_tokens
+                if following_word_index < len(words_from_page_processed):
+                    current_following_word = words_from_page_processed[following_word_index].lower()
+                    all_observed_following_words.append(current_following_word)
+                
+                temp_results_for_sorting.append({
                     "context_words": context_words_list,
-                    "matched_start": result_matched_start,
-                    "matched_end": result_matched_end
+                    "matched_start": len(before),
+                    "matched_end": len(before) + num_target_tokens,
+                    "original_text_index": i,
+                    "raw_following_word": current_following_word
                 })
 
-    elif search_type == 'pos':
-        logging.info(f"--- Attempting POS tagging ---")
-        # ... (入力データのログ出力はそのまま) ...
-        
-        if not words_from_page_original_case: # ユーザー提供のコードではこの変数名
-             logging.warning("Input token list for POS tagging is empty.")
-             # tagged_words は空リストになる
-
-        try:
-            # --- ここを修正: nltk.pos_tag() の直接呼び出しに戻す ---
-            tagged_words = nltk.pos_tag(words_from_page_original_case) # ユーザー提供の変数名を使用
-            # --- 修正ここまで ---
-
-            logging.info(f"POS tagging successful. Number of tagged words: {len(tagged_words)}")
-            if tagged_words:
-                logging.info(f"Sample of tagged words (first 5): {tagged_words[:5]}")
-
-        except Exception as e_pos_tag: # LookupError も含め、より広範なエラーを捕捉
-            logging.error(f"NLTK pos_tag FAILED. Error: {e_pos_tag}") 
-            logging.error(f"Traceback for pos_tag failure:\n{traceback.format_exc()}")
-            return jsonify({"error": "Part-of-speech tagging failed on the server. Please check server logs for details."}), 500
+        if not temp_results_for_sorting:
+            logging.info(f"Query '{query_input}' (Type: token, Processed: '{' '.join(target_tokens_processed)}') not found.")
+            # results は空のままなので、この後の共通処理で "not found" メッセージが返る
+        else:
+            overall_following_word_frequencies = Counter(all_observed_following_words)
             
-        target_pos_tag_query = query_input.upper() # ユーザー提供のコードでは query_input を直接使用
+            results_with_frequency_info = []
+            for item in temp_results_for_sorting:
+                item['overall_following_word_frequency'] = overall_following_word_frequencies.get(item['raw_following_word'], 0)
+                results_with_frequency_info.append(item)
+            
+            results_with_frequency_info.sort(key=lambda x: (-x['overall_following_word_frequency'], x['original_text_index']))
+            results = results_with_frequency_info # ソートされた結果を results に代入
+        # --- トークン検索とソートロジックここまで ---
+
+    elif search_type == 'pos':
+        # --- POS検索ロジック (入力は words_from_page_processed を使用) ---
+        target_pos_tag_query = query_input.strip().upper() # 句読点除去は不要、バリデーションは基本クエリバリデーションでカバー
+        if not target_pos_tag_query: # query_inputが空かスペースのみの場合
+             return jsonify({"error": f"For {search_type} search, please provide a valid tag."}), 400
+        if " " in target_pos_tag_query: # スペースが含まれている場合
+             return jsonify({"error": f"For {search_type} search, please enter a single tag (no spaces)."}), 400
+
+
+        logging.info(f"--- Attempting POS tagging for query '{target_pos_tag_query}' ---")
+        # ... (前回提案の nltk.pos_tag() の直接呼び出し、またはエラーハンドリング付きの明示的ロード)
+        try:
+            tagged_words = nltk.pos_tag(words_from_page_processed) # words_from_page_processed を使用
+            logging.info(f"POS tagging successful. Number of tagged words: {len(tagged_words)}")
+        except Exception as e_pos_tag:
+            logging.error(f"NLTK pos_tag FAILED. Error: {e_pos_tag}\n{traceback.format_exc()}")
+            return jsonify({"error": "Part-of-speech tagging failed on the server. Check server logs."}), 500
 
         for i, (word, tag) in enumerate(tagged_words):
             if tag == target_pos_tag_query:
-                # ユーザー提供のコードでは words_from_page_original_case を使用
-                before = words_from_page_original_case[max(0, i - backend_context_window_size): i]
-                matched_word = [words_from_page_original_case[i]]
-                after = words_from_page_original_case[i + 1 : i + 1 + backend_context_window_size]
-                
+                before = words_from_page_processed[max(0, i - backend_context_window_size): i]
+                matched_word = [words_from_page_processed[i]]
+                after = words_from_page_processed[i + 1 : i + 1 + backend_context_window_size]
                 context_words_list = before + matched_word + after
-                result_matched_start = len(before)
-                result_matched_end = result_matched_start + 1
-                
                 results.append({
                     "context_words": context_words_list,
-                    "matched_start": result_matched_start,
-                    "matched_end": result_matched_end
+                    "matched_start": len(before), "matched_end": len(before) + 1
                 })
+        # --- POS検索ロジックここまで ---
 
     elif search_type == 'entity':
-        logging.info(f"--- Attempting Entity Recognition ---")
-        # ... (入力データのログ出力はそのまま) ...
+        # --- Entity検索ロジック (入力は words_from_page_processed を使用) ---
+        target_entity_type_query = query_input.strip().upper() # 句読点除去は不要
+        if not target_entity_type_query:
+             return jsonify({"error": f"For {search_type} search, please provide a valid entity type."}), 400
+        if " " in target_entity_type_query:
+             return jsonify({"error": f"For {search_type} search, please enter a single entity type (no spaces)."}), 400
 
-        if not words_from_page_original_case: # ユーザー提供のコードではこの変数名
-            logging.warning("Input token list for NER (via POS tagging) is empty.")
-            # tagged_words_for_ner は空リストになる
-
+        logging.info(f"--- Attempting Entity Recognition for query '{target_entity_type_query}' ---")
+        # ... (前回提案の nltk.pos_tag() と nltk.ne_chunk() の呼び出し、またはエラーハンドリング付きの明示的ロード)
         try:
-            # --- ここを修正: nltk.pos_tag() の直接呼び出しに戻す ---
-            tagged_words_for_ner = nltk.pos_tag(words_from_page_original_case) # ユーザー提供の変数名を使用
-            # --- 修正ここまで ---
-            logging.info(f"POS tagging for NER successful. Number of tagged words: {len(tagged_words_for_ner)}")
-            if tagged_words_for_ner:
-                logging.info(f"Sample of tagged words for NER (first 5): {tagged_words_for_ner[:5]}")
-
+            tagged_words_for_ner = nltk.pos_tag(words_from_page_processed) # words_from_page_processed を使用
             chunked_entities_tree = nltk.ne_chunk(tagged_words_for_ner)
             iob_tags = nltk.chunk.util.tree2conlltags(chunked_entities_tree)
-            logging.info(f"Entity chunking and IOB conversion successful. Number of IOB tags: {len(iob_tags)}")
+            logging.info(f"Entity chunking successful. Number of IOB tags: {len(iob_tags)}")
+        except Exception as e_ner:
+            logging.error(f"NLTK entity recognition FAILED. Error: {e_ner}\n{traceback.format_exc()}")
+            return jsonify({"error": "Entity recognition failed on the server. Check server logs."}), 500
 
-        except Exception as e_ner: # LookupError も含め、より広範なエラーを捕捉
-            logging.error(f"NLTK entity recognition processing FAILED. Error: {e_ner}")
-            logging.error(f"Traceback for NER failure:\n{traceback.format_exc()}")
-            return jsonify({"error": "Entity recognition processing failed on the server. Please check server logs."}), 500
-
-        target_entity_type_query = query_input.upper() # ユーザー提供のコードでは query_input を直接使用
-        
         idx = 0
         while idx < len(iob_tags):
-            # ... (既存のIOBタグ処理ロジックはそのまま、ただし context_words_list を作る際に使うのは words_from_page_original_case) ...
             word_from_iob, _, iob_label = iob_tags[idx] 
-            
             if iob_label.startswith('B-') and iob_label[2:] == target_entity_type_query:
                 current_entity_words = [word_from_iob] 
-                entity_start_index_in_original_list = idx # これは iob_tags (つまり words_from_page_original_case) でのインデックス
-                
+                entity_start_index_in_processed_list = idx
                 next_idx = idx + 1
                 while next_idx < len(iob_tags):
                     next_word_from_iob, _, next_iob_label = iob_tags[next_idx]
                     if next_iob_label.startswith('I-') and next_iob_label[2:] == target_entity_type_query:
-                        current_entity_words.append(next_word_from_iob)
-                        next_idx += 1
-                    else:
-                        break
-                
-                num_entity_tokens = len(current_entity_words)
-                # コンテキスト表示には元の(句読点除去前の)トークンリストを使うか、句読点除去後のリストを使うか、
-                # ユーザーのコードでは words_from_page_original_case (これは句読点除去前のものを指す変数名だったが、実際には句読点除去処理が入っているはず)
-                # 一貫性のため、POS/Entityでも句読点除去後のトークンでコンテキストを組む場合は、
-                # words_from_page_processed のような変数名で、句読点除去済みのリストを参照すべき。
-                # ユーザーのコードでは、words_from_page_original_case がトークン化後のリストを指し、
-                # 句読点除去はこの変数に対して行われていないように見える。
-                # 前回の句読点除去の提案では、words_from_page_processed という新しい変数名を使っていた。
-                # ここではユーザーのログで使われていた words_from_page_original_case をそのまま使う前提で進めるが、
-                # この変数が句読点除去済みか否かで結果の見た目が変わる。
-                # 「句読点を考えないようにしたい」という要望からは、表示も句読点なしが良いかもしれない。
-                # ただし、ユーザーが提供した app.py 全体を見ると、KWIC検索では句読点除去と小文字化を行っていた。
-                # POS/Entity でも同様の処理を一貫して適用するのが良い。
-
-                # words_from_page_original_case が句読点除去済みかつ元のケースを保持していると仮定
-                before = words_from_page_original_case[max(0, entity_start_index_in_original_list - backend_context_window_size): entity_start_index_in_original_list]
-                # current_entity_words は iob_tags から来ているので、words_from_page_original_case のスライスと同じはず
-                after = words_from_page_original_case[next_idx : next_idx + backend_context_window_size]
-                
+                        current_entity_words.append(next_word_from_iob); next_idx += 1
+                    else: break
+                before = words_from_page_processed[max(0, entity_start_index_in_processed_list - backend_context_window_size): entity_start_index_in_processed_list]
+                after = words_from_page_processed[next_idx : next_idx + backend_context_window_size]
                 context_words_list = before + current_entity_words + after
-                result_matched_start = len(before)
-                result_matched_end = result_matched_start + num_entity_tokens
-                
                 results.append({
                     "context_words": context_words_list,
-                    "matched_start": result_matched_start,
-                    "matched_end": result_matched_end
+                    "matched_start": len(before), "matched_end": len(before) + len(current_entity_words)
                 })
                 idx = next_idx
-            else:
-                idx += 1
+            else: idx += 1
+        # --- Entity検索ロジックここまで ---
+    
+    else: # Should have been caught by earlier validation, but as a safeguard
+        logging.warning(f"Unknown search_type encountered: {search_type}")
+        return jsonify({"error": "Invalid search type specified."}), 400
 
+    # --- 最終的なレスポンス ---
     if not results:
-        logging.info(f"Query '{query_input}' (Type: {search_type}) not found in text from {url}")
+        # `search_type == 'token'` の場合は、そのブロック内で専用の "not found" メッセージが返されるので、ここでは主に POS/Entity 用
+        processed_query_display = ' '.join(target_tokens_processed) if search_type == 'token' else query_input
+        logging.info(f"Query '{query_input}' (Type: {search_type}, Processed for display: '{processed_query_display}') not found.")
         return jsonify({
             "results": [],
-            "error": f"The query '{query_input}' (Type: {search_type}) was not found in the text from the provided URL."
+            "error": f"The query '{processed_query_display}' (Type: {search_type}) was not found."
         }), 200
         
-    logging.info(f"Found {len(results)} occurrences for query '{query_input}' (Type: {search_type}) in text from {url}")
+    logging.info(f"Found {len(results)} occurrences for query '{query_input}' (Type: {search_type}).")
     return jsonify({"results": results})
 
 @app.route('/api/authorship', methods=['POST'])
