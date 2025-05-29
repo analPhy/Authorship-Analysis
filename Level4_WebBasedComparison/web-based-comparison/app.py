@@ -1,312 +1,143 @@
 # app.py
 
-
 # --- Imports ---
-# EN: Import necessary libraries for web server, text processing, ML, etc.
-# JP: Webサーバー、テキスト処理、機械学習などに必要なライブラリをインポート
-from collections import Counter
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-# import shutil
 import re
 import urllib.request
 from urllib.error import URLError, HTTPError
 import nltk
 from nltk.tokenize import word_tokenize
-# import ssl
+# nltk.download('maxent_ne_chunker_tab') # ← この行は削除またはコメントアウトを推奨 (REQUIRED_NLTK_RESOURCESで管理)
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import traceback
 import logging
 import sys
+import string # 句読点処理のために追加
+from collections import Counter # トークン検索のソート用に前回追加 (ユーザーが追加したソートとは別)
 
-import string
-
-# --- Authorship Attribution Imports ---
-# EN: Import scikit-learn modules for authorship analysis
-# JP: 著者識別分析用のscikit-learnモジュールをインポート
+# ... (他のML系インポートは変更なし)
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
-from sklearn.naive_bayes import MultinomialNB
-from sklearn.metrics import classification_report as sk_classification_report, accuracy_score
-
-# --- Multilingual Support Libraries ---
-# EN: Import libraries for language detection, Japanese tokenization, and stopwords
-# JP: 言語判定、日本語形態素解析、ストップワード用ライブラリをインポート
+# ... (以下同様)
 from langdetect import detect as lang_detect
 import fugashi
 from stopwordsiso import stopwords
 
-PUNCTUATION_SET = set(string.punctuation + '。、「」』『【】・（）　')
 
-# --- Logging Setup ---
-# EN: Configure logging for debugging and monitoring
-# JP: デバッグや監視用のロギング設定
+# --- Logging Setup --- (変更なし)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
     stream=sys.stdout
 )
 
-# --- NLTK Resource Check ---
-# EN: Check and download required NLTK resources if missing
-# JP: 必要なNLTKリソースがなければダウンロード
+# --- NLTK Resource Check --- (変更なし、ただしpunkt_tabがユーザーコードにあったので残す)
 REQUIRED_NLTK_RESOURCES = {
-    "punkt": "tokenizers/punkt",  # 標準の文分割モデル
-    "punkt_tab": "tokenizers/punkt_tab", # エラーメッセージに基づき追加
+    "punkt": "tokenizers/punkt",
+    "punkt_tab": "tokenizers/punkt_tab", # ユーザーコードにあったので残すが、通常punktで十分
     "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger",
     "maxent_ne_chunker": "chunkers/maxent_ne_chunker",
     "words": "corpora/words"
 }
+# ... (NLTKリソースチェックのループは変更なし) ...
 
-logging.info("Checking NLTK resources...")
-for download_key, path_to_find in REQUIRED_NLTK_RESOURCES.items():
-    try:
-        nltk.data.find(path_to_find)
-        logging.info(f"NLTK resource '{download_key}' (for path '{path_to_find}') found.")
-    except LookupError:
-        logging.warning(f"NLTK resource '{download_key}' (for path '{path_to_find}') not found. Attempting to download '{download_key}'...")
-        try:
-            # EN: Attempt to download the resource
-            # JP: リソースのダウンロードを試みる
-            download_successful = nltk.download(download_key, quiet=False)
-            
-            if download_successful:
-                logging.info(f"NLTK download command for '{download_key}' executed, appearing successful.")
-                nltk.data.find(path_to_find)
-                logging.info(f"NLTK resource '{download_key}' now found after download.")
-            else:
-                logging.error(f"NLTK download for '{download_key}' returned False. Attempting to verify if it's available anyway...")
-                try:
-                    nltk.data.find(path_to_find)
-                    logging.info(f"NLTK resource '{download_key}' found despite download command returning False (perhaps already existed or downloaded by other means).")
-                except LookupError:
-                    logging.error(f"CRITICAL: NLTK resource '{download_key}' still not found after download command returned False. Manual intervention likely required.")
-        
-        except Exception as e_download:
-            logging.error(f"Error during NLTK resource '{download_key}' download or verification: {e_download}")
-            logging.error(f"Please check network connectivity and NLTK setup. You may need to run: python -m nltk.downloader {download_key}")
+# --- 句読点除去のためのヘルパー関数と定数 ---
+PUNCTUATION_SET = set(string.punctuation + '。、「」』『【】・（）　')
 
-# --- Global Settings for Authorship Attribution ---
-# EN: Initialize Japanese tokenizer and stopwords
-# JP: 日本語トークナイザーとストップワードの初期化
-_TAGGER = None
-try:
-    _TAGGER = fugashi.Tagger()
-    logging.info("fugashi Tagger initialized successfully.")
-except Exception as e:
-    logging.error(f"Failed to initialize fugashi Tagger: {e}. Japanese tokenization for authorship will not work.")
+def remove_punctuation_from_token(token: str) -> str:
+    return ''.join(char for char in token if char not in PUNCTUATION_SET)
 
-_EN_SW = set()
-_JA_SW = set()
-try:
-    _EN_SW = stopwords("en")
-    _JA_SW = stopwords("ja")
-    logging.info("English and Japanese stopwords (for authorship) loaded.")
-except Exception as e:
-    logging.error(f"Failed to load stopwords (for authorship): {e}")
+def preprocess_tokens(tokens_list: list[str]) -> list[str]:
+    """Removes punctuation from each token and filters out any empty tokens."""
+    processed_tokens = [remove_punctuation_from_token(token) for token in tokens_list]
+    return [token for token in processed_tokens if token]
+# --- ここまで句読点除去ヘルパー ---
 
-_ALL_SW = sorted(list(_EN_SW.union(_JA_SW)))
+# ... (Fugashi, Stopwords, _SENT_RE の設定は変更なし) ...
 
-# EN: Regex for sentence splitting (Japanese and English)
-# JP: 文分割用の正規表現（日本語・英語対応）
-_SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+")
-
-# --- Flask App Setup ---
-# EN: Create Flask app and configure CORS
-# JP: Flaskアプリの作成とCORS設定
+# --- Flask App Setup --- (CORS設定はユーザーの最新版を尊重)
 app = Flask(__name__)
-
-# app.py のCORS設定部分を以下のように変更
-
-# GitHub PagesのURLを特定します。
-## --- CORS 設定 ---
-# EN: Define allowed origins for CORS
-# JP: CORSを許可するオリジンを定義
-FRONTEND_GITHUB_PAGES_ORIGIN = "https://analphy.github.io"  # あなたのGitHub Pagesのオリジン
-FRONTEND_DEV_ORIGIN_3000 = "http://localhost:3000"         # React開発サーバーの一般的なポート
-FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080"         # あなたがフロントエンド開発で使っていたポート
-
+FRONTEND_GITHUB_PAGES_ORIGIN = "https://analphy.github.io"
+FRONTEND_DEV_ORIGIN_3000 = "http://localhost:3000"
+FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080"
 allowed_origins_list = [
     FRONTEND_GITHUB_PAGES_ORIGIN,
     FRONTEND_DEV_ORIGIN_3000,
     FRONTEND_DEV_ORIGIN_8080,
 ]
-
 CORS(app, resources={r"/api/*": {"origins": allowed_origins_list}})
-# --- ここまでCORS設定 ---
 
-# === Text processing for KWIC Search ===
-# EN: Fetch and clean text from a Wikipedia URL for KWIC search
-# JP: KWIC検索用にWikipediaのURLからテキストを取得・整形
-def get_text_from_url_for_kwic(url):
-    logging.info(f"Attempting to fetch URL (for KWIC search): {url}")
-    try:
-        req = urllib.request.Request(
-            url,
-            data=None,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-        )
-        with urllib.request.urlopen(req, timeout=15) as response:
-            content_type = response.getheader('Content-Type')
-            if not (content_type and 'text/html' in content_type.lower()):
-                 logging.warning(f"URL (KWIC search) is not an HTML page: {url} (Content-Type: {content_type})")
-                 raise ValueError(f"The provided URL does not appear to be an HTML page. (Content-Type: {content_type})")
-            html = response.read()
 
-        soup = BeautifulSoup(html, 'html.parser')
-        # EN: Remove unnecessary tags
-        # JP: 不要なタグを除去
-        for tag in soup(['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
-                         'nav', 'footer', 'aside', 'form', 'input', 'button', 'img',
-                         'audio', 'video', 'iframe', 'object', 'embed', 'header', 'svg', 'canvas']):
-            tag.decompose()
-        text = soup.get_text(separator=' ')
-        text = re.sub(r'\s+', ' ', text).strip()
-        logging.info(f"Successfully fetched and parsed URL (for KWIC search): {url}")
-        return text
-    except (URLError, HTTPError) as e:
-        logging.error(f"URL Error fetching (KWIC search) {url}: {e.reason}")
-        raise ValueError(f"Could not access the provided URL. Please check the URL. Reason: {e.reason}")
-    except TimeoutError:
-         logging.error(f"Timeout fetching (KWIC search) {url} after 15 seconds.")
-         raise ValueError(f"URL fetching timed out. The page took too long to respond.")
-    except ValueError as e:
-          logging.error(f"Value Error processing (KWIC search) {url}: {e}")
-          raise
-    except Exception as e:
-        logging.error(f"An unexpected error occurred in get_text_from_url_for_kwic for {url}: {e}\n{traceback.format_exc()}")
-        raise ValueError(f"An unexpected error occurred while fetching or processing the URL.")
+# ... (get_text_from_url_for_kwic, clean_text_for_kwic は変更なし) ...
+# ... (fetch_wikipedia_text_for_authorship, mixed_sentence_tokenize_for_authorship (古いバージョン), build_sentence_dataset_for_authorship は変更なし) ...
 
-def clean_text_for_kwic(text):
-    # EN: Remove citation numbers and extra spaces
-    # JP: 参照番号や余分な空白を除去
-    text = re.sub(r'\[\d+\]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-# === Authorship Attribution Helpers ===
-# EN: Fetch and clean Wikipedia text for authorship analysis
-# JP: 著者識別分析用にWikipediaテキストを取得・整形
-def fetch_wikipedia_text_for_authorship(url: str) -> str:
-    logging.info(f"Fetching Wikipedia text for authorship from URL: {url}")
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={'User-Agent': 'Mozilla/5.0 (Python-Flask-Authorship-App/1.0)'}
-        )
-        with urllib.request.urlopen(req, timeout=20) as response:
-            html = response.read()
-            content_type = response.getheader('Content-Type')
-            if not (content_type and 'text/html' in content_type.lower()):
-                 logging.warning(f"URL (authorship) is not an HTML page: {url} (Content-Type: {content_type})")
-                 raise ValueError(f"The provided URL does not appear to be an HTML page.")
-    except (URLError, HTTPError) as e:
-        logging.error(f"URL Error fetching (authorship) {url}: {e.reason}")
-        raise ValueError(f"Could not access the URL for authorship. Reason: {e.reason}")
-    except TimeoutError:
-        logging.error(f"Timeout fetching (authorship) {url}")
-        raise ValueError("URL fetching for authorship timed out.")
-    except Exception as err:
-        logging.error(f"Error fetching URL (authorship) {url}: {err}\n{traceback.format_exc()}")
-        raise ValueError(f"An unexpected error occurred while fetching URL for authorship.")
-
-    soup = BeautifulSoup(html, "html.parser")
-    # EN: Remove unnecessary tags
-    # JP: 不要なタグを除去
-    for tag in soup(["script", "style", "sup", "table", "nav", "footer", "aside", "header", "form", "figure", "figcaption", "link", "meta", "input", "button", "img", "audio", "video", "iframe", "object", "embed", "svg", "canvas", "noscript"]):
-        tag.decompose()
-    text = soup.get_text(" ")
-    text = re.sub(r"\[\d+\]", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
-    logging.info(f"Successfully fetched and parsed Wikipedia text for authorship from URL: {url}")
-    return text
-
-def mixed_sentence_tokenize_for_authorship(text: str):
-    # EN: Split text into sentences (supports Japanese and English)
-    # JP: テキストを文ごとに分割（日本語・英語対応）
-    return [s.strip() for s in _SENT_RE.split(text) if s.strip()]
-
-# app.py の tokenize_mixed_for_authorship 関数を以下のように置き換える
-
-def remove_punctuation_from_token(token: str) -> str:
-    return ''.join(char for char in token if char not in PUNCTUATION_SET)
-
-def preprocess_tokens_for_search(tokens_list: list[str]) -> list[str]:
-    processed_tokens = [remove_punctuation_from_token(token) for token in tokens_list]
-    return [token for token in processed_tokens if token]
-
-def tokenize_mixed_for_authorship(text: str):
-    # EN: Always use English word_tokenize for simplicity and performance on Render free tier.
-    # JP: Render無料枠でのシンプルさとパフォーマンスのため、常に英語のword_tokenizeを使用する。
-    #     言語判定とFugashiの使用を一時的にコメントアウト。
-    # if not _TAGGER:
-    #     logging.warning("Fugashi Tagger not available, defaulting to English tokenization for mixed content (authorship).")
-    #     try:
-    #         return word_tokenize(text)
-    #     except Exception as e_tok:
-    #         logging.error(f"NLTK word_tokenize fallback failed: {e_tok}")
-
-    # try:
-    #     # This lang_detect call seems to be causing timeouts
-    #     lang = lang_detect(text)
-    # except Exception:
-    #     lang = "en" # Default to English if lang_detect fails
-
-    # if lang == "ja" and _TAGGER: # Ensure _TAGGER is available
-    #     return [tok.surface for tok in _TAGGER(text)]
-    # else:
-    #     # Default to English tokenization
-    try:
-        initial_tokens = word_tokenize(text)
-    except Exception as e_tok_en:
-        logging.error(f"NLTK word_tokenize for English text failed during authorship tokenization: {e_tok_en}")
-        initial_tokens = text.split()
-
-    punctuation_removed_tokens = preprocess_tokens_for_search(initial_tokens)
-    lowercased_tokens = [token.lower() for token in punctuation_removed_tokens]
-    return lowercased_tokens
+# --- tokenize_mixed_for_authorship 関数の修正 (句読点除去と小文字化を適用) ---
+def tokenize_mixed_for_authorship(text: str) -> list[str]:
+    # ユーザー提供のコードは言語判定とFugashiを含んでいたので、それをベースに修正
+    # ただし、以前のやり取りでタイムアウト問題のため英語tokenizeに一時的に単純化していた。
+    # ここでは、ユーザー提供の多言語対応版に戻しつつ、句読点処理を追加する。
     
-def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
-    # EN: Build a dataset of sentences and labels for authorship analysis
-    # JP: 著者識別分析用の文とラベルのデータセットを作成
-    sentences = mixed_sentence_tokenize_for_authorship(text)
-    filtered = [s for s in sentences if len(s) >= min_len]
-    labels = [author_label] * len(filtered)
-    return filtered, labels
+    initial_tokens = []
+    # --- ユーザー提供の言語判定とトークン化ロジック ---
+    if not _TAGGER: # Fugashiが利用できない場合
+        logging.warning("Fugashi Tagger not available, defaulting to English tokenization for mixed content (authorship).")
+        try:
+            initial_tokens = word_tokenize(text)
+        except Exception as e_tok:
+            logging.error(f"NLTK word_tokenize fallback failed: {e_tok}")
+            initial_tokens = text.split()
+    else: # Fugashiが利用可能な場合
+        try:
+            lang = lang_detect(text)
+        except Exception:
+            logging.warning(f"Langdetect failed for text sample: '{text[:100]}'. Defaulting to English tokenization.")
+            lang = "en"
+
+        if lang == "ja":
+            initial_tokens = [tok.surface for tok in _TAGGER(text)]
+        else: # 他の言語 (主に英語を想定)
+            try:
+                initial_tokens = word_tokenize(text)
+            except Exception as e_tok_en:
+                logging.error(f"NLTK word_tokenize for non-Japanese text failed: {e_tok_en}")
+                initial_tokens = text.split()
+    # --- ここまでユーザー提供のトークン化ロジック ---
+
+    # 句読点除去と小文字化を適用
+    punctuation_removed_tokens = preprocess_tokens(initial_tokens)
+    lowercased_tokens = [token.lower() for token in punctuation_removed_tokens]
+    
+    # logging.debug(f"Authorship tokens (processed): {lowercased_tokens[:20]}")
+    return lowercased_tokens
+# --- ここまで tokenize_mixed_for_authorship 関数の修正 ---
+
 
 # === API Endpoints ===
-
-# app.py (kwic_search 関数 および関連部分の修正)
-
-# ... (既存のインポート、PUNCTUATION_SET, remove_punctuation_from_token, preprocess_tokens_for_search の定義は変更なし) ...
-# ... (他の関数定義も変更なし) ...
 
 @app.route('/api/search', methods=['POST'])
 def kwic_search():
     data = request.json
     url = data.get('url', '').strip()
-    query_input = data.get('query', '').strip() # ユーザーからの生の検索クエリ
+    query_input = data.get('query', '').strip() # 生の検索クエリ
     search_type = data.get('type', 'token').strip().lower()
 
     logging.info(f"Received KWIC search request. URL: {url}, Raw Query: '{query_input}', Type: {search_type}")
 
-    # --- URLと基本的なクエリのバリデーション (変更なし) ---
+    # --- URLと基本的なクエリのバリデーション (ユーザーコードをベースに) ---
     if not url:
         logging.warning("KWIC search request missing URL.")
-        # メッセージは get_text_from_general_url に合わせて修正しても良い
-        return jsonify({"error": "Please provide a Web Page URL."}), 400
+        return jsonify({"error": "Please provide a Web Page URL."}), 400 # メッセージを汎用化
     try:
         parsed_url = urlparse(url)
         if parsed_url.scheme not in ['http', 'https']:
             logging.warning(f"Invalid URL scheme: {url}")
             return jsonify({"error": "Invalid URL scheme. Only http or https are allowed."}), 400
-        if not parsed_url.hostname: # or is_restricted_hostname(parsed_url.hostname) from previous general URL suggestion
-             logging.warning(f"Invalid or restricted URL hostname: {url}")
-             return jsonify({"error": "Invalid or restricted URL hostname."}), 400
-    except ValueError:
+        if not parsed_url.hostname:
+             logging.warning(f"Invalid URL hostname: {url}")
+             return jsonify({"error": "Invalid URL hostname."}), 400
+        # ここに汎用URL対応のための is_restricted_hostname(parsed_url.hostname) チェックを追加可能 (今回は省略)
+    except ValueError: # urlparseがエラーを出すことは稀だが念のため
          logging.warning(f"Invalid URL format: {url}")
          return jsonify({"error": "Invalid URL format."}), 400
     except Exception as e:
@@ -319,11 +150,8 @@ def kwic_search():
     # --- ここまでバリデーション ---
 
     # --- ページからテキストを取得し、トークン化し、句読点除去 ---
-    # この処理は全ての検索タイプで必要になる可能性があるため、分岐の前に行う
     try:
-        # get_text_from_url_for_kwic を使うか、汎用化された get_text_from_general_url を使うか選択
-        # ここではユーザーが提供したコードに合わせて get_text_from_url_for_kwic を使用
-        raw_text = get_text_from_url_for_kwic(url)
+        raw_text = get_text_from_url_for_kwic(url) # ユーザーの既存関数を使用
         text_cleaned = clean_text_for_kwic(raw_text)
         
         if not text_cleaned:
@@ -331,45 +159,38 @@ def kwic_search():
             return jsonify({"results": [], "error": "Could not extract text content from the URL."}), 200
 
         initial_tokens_from_page = word_tokenize(text_cleaned)
-        # これが検索対象となる、句読点除去済みのページのトークンリスト
-        words_from_page_processed = preprocess_tokens_for_search(initial_tokens_from_page) 
+        words_from_page_processed = preprocess_tokens(initial_tokens_from_page) # 句読点除去済み
 
         if not words_from_page_processed:
             logging.info(f"No searchable tokens after processing for URL: {url}")
             return jsonify({"results": [], "error": "No searchable words found in the URL after processing."}), 200
 
-    except ValueError as e: # エラーメッセージを get_text_from_url_for_kwic から受け取る
+    except ValueError as e:
         logging.warning(f"Error during URL processing for KWIC search {url}: {e}")
-        return jsonify({"error": str(e)}), 400 # str(e) でエラーメッセージをそのまま返す
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logging.error(f"Unexpected server error during URL/text processing: {e}\n{traceback.format_exc()}")
         return jsonify({"error": "An unexpected server error occurred during URL processing."}), 500
     # --- ここまでで words_from_page_processed が準備完了 ---
 
-    results = [] # 最終的な検索結果リスト
-    backend_context_window_size = 10 # これは変更なし
+    results = []
+    backend_context_window_size = 10
 
     if search_type == 'token':
-        # --- 検索クエリの準備 (句読点除去とバリデーション) ---
         raw_target_tokens = query_input.split()
-        target_tokens_processed = preprocess_tokens_for_search(raw_target_tokens) # ★★★ target_tokens_processed をここで定義 ★★★
+        target_tokens_processed = preprocess_tokens(raw_target_tokens)
         
         if not target_tokens_processed:
             logging.warning(f"Token query '{query_input}' became empty after punctuation removal.")
-            return jsonify({"error": "Query became empty after removing punctuation. Please provide a query with more than just punctuation."}), 400
+            return jsonify({"error": "Query became empty. Please provide a query with more than just punctuation."}), 400
         
         if not 1 <= len(target_tokens_processed) <= 5:
             logging.warning(f"Invalid token query length after punctuation removal: {target_tokens_processed} (Original: '{query_input}')")
             return jsonify({"error": "For token search, please enter one to five words (after punctuation removal)."}), 400
-        # --- ここまで検索クエリ準備完了 ---
 
-        # --- トークン検索とソートロジック (前回提案通り) ---
         words_from_page_lower = [w.lower() for w in words_from_page_processed]
-        target_token_list_lower = [word.lower() for word in target_tokens_processed] # 正しく参照
+        target_token_list_lower = [word.lower() for word in target_tokens_processed]
         num_target_tokens = len(target_token_list_lower)
-
-        temp_results_for_sorting = []
-        all_observed_following_words = []
 
         for i in range(len(words_from_page_lower) - num_target_tokens + 1):
             if words_from_page_lower[i : i + num_target_tokens] == target_token_list_lower:
@@ -377,53 +198,25 @@ def kwic_search():
                 matched_segment = words_from_page_processed[i : i + num_target_tokens]
                 after = words_from_page_processed[i + num_target_tokens : i + num_target_tokens + backend_context_window_size]
                 context_words_list = before + matched_segment + after
-                
-                current_following_word = ""
-                following_word_index = i + num_target_tokens
-                if following_word_index < len(words_from_page_processed):
-                    current_following_word = words_from_page_processed[following_word_index].lower()
-                    all_observed_following_words.append(current_following_word)
-                
-                temp_results_for_sorting.append({
+                results.append({
                     "context_words": context_words_list,
                     "matched_start": len(before),
-                    "matched_end": len(before) + num_target_tokens,
-                    "original_text_index": i,
-                    "raw_following_word": current_following_word
+                    "matched_end": len(before) + num_target_tokens
                 })
 
-        if not temp_results_for_sorting:
-            logging.info(f"Query '{query_input}' (Type: token, Processed: '{' '.join(target_tokens_processed)}') not found.")
-            # results は空のままなので、この後の共通処理で "not found" メッセージが返る
-        else:
-            overall_following_word_frequencies = Counter(all_observed_following_words)
-            
-            results_with_frequency_info = []
-            for item in temp_results_for_sorting:
-                item['overall_following_word_frequency'] = overall_following_word_frequencies.get(item['raw_following_word'], 0)
-                results_with_frequency_info.append(item)
-            
-            results_with_frequency_info.sort(key=lambda x: (-x['overall_following_word_frequency'], x['original_text_index']))
-            results = results_with_frequency_info # ソートされた結果を results に代入
-        # --- トークン検索とソートロジックここまで ---
-
     elif search_type == 'pos':
-        # --- POS検索ロジック (入力は words_from_page_processed を使用) ---
-        target_pos_tag_query = query_input.strip().upper() # 句読点除去は不要、バリデーションは基本クエリバリデーションでカバー
-        if not target_pos_tag_query: # query_inputが空かスペースのみの場合
-             return jsonify({"error": f"For {search_type} search, please provide a valid tag."}), 400
-        if " " in target_pos_tag_query: # スペースが含まれている場合
-             return jsonify({"error": f"For {search_type} search, please enter a single tag (no spaces)."}), 400
-
-
-        logging.info(f"--- Attempting POS tagging for query '{target_pos_tag_query}' ---")
-        # ... (前回提案の nltk.pos_tag() の直接呼び出し、またはエラーハンドリング付きの明示的ロード)
+        target_pos_tag_query = query_input.strip().upper()
+        if not target_pos_tag_query or " " in target_pos_tag_query:
+             return jsonify({"error": f"For POS search, please enter a single valid tag (no spaces)."}), 400
+        
+        logging.info(f"Attempting POS tagging for query '{target_pos_tag_query}' with {len(words_from_page_processed)} tokens.")
         try:
-            tagged_words = nltk.pos_tag(words_from_page_processed) # words_from_page_processed を使用
-            logging.info(f"POS tagging successful. Number of tagged words: {len(tagged_words)}")
+            # NLTKの標準的なpos_tagを使用。入力は句読点除去済みトークン。
+            tagged_words = nltk.pos_tag(words_from_page_processed)
+            logging.info(f"POS tagging successful. Sample: {tagged_words[:5]}")
         except Exception as e_pos_tag:
-            logging.error(f"NLTK pos_tag FAILED. Error: {e_pos_tag}\n{traceback.format_exc()}")
-            return jsonify({"error": "Part-of-speech tagging failed on the server. Check server logs."}), 500
+            logging.error(f"NLTK pos_tag FAILED: {e_pos_tag}\n{traceback.format_exc()}")
+            return jsonify({"error": "Part-of-speech tagging failed. Check server logs."}), 500
 
         for i, (word, tag) in enumerate(tagged_words):
             if tag == target_pos_tag_query:
@@ -435,40 +228,35 @@ def kwic_search():
                     "context_words": context_words_list,
                     "matched_start": len(before), "matched_end": len(before) + 1
                 })
-        # --- POS検索ロジックここまで ---
 
     elif search_type == 'entity':
-        # --- Entity検索ロジック (入力は words_from_page_processed を使用) ---
-        target_entity_type_query = query_input.strip().upper() # 句読点除去は不要
-        if not target_entity_type_query:
-             return jsonify({"error": f"For {search_type} search, please provide a valid entity type."}), 400
-        if " " in target_entity_type_query:
-             return jsonify({"error": f"For {search_type} search, please enter a single entity type (no spaces)."}), 400
+        target_entity_type_query = query_input.strip().upper()
+        if not target_entity_type_query or " " in target_entity_type_query:
+             return jsonify({"error": f"For Entity search, please enter a single valid entity type (no spaces)."}), 400
 
-        logging.info(f"--- Attempting Entity Recognition for query '{target_entity_type_query}' ---")
-        # ... (前回提案の nltk.pos_tag() と nltk.ne_chunk() の呼び出し、またはエラーハンドリング付きの明示的ロード)
+        logging.info(f"Attempting Entity Recognition for query '{target_entity_type_query}' with {len(words_from_page_processed)} tokens.")
         try:
-            tagged_words_for_ner = nltk.pos_tag(words_from_page_processed) # words_from_page_processed を使用
-            chunked_entities_tree = nltk.ne_chunk(tagged_words_for_ner)
+            # NERの前処理としてPOSタギング。入力は句読点除去済みトークン。
+            tagged_words_for_ner = nltk.pos_tag(words_from_page_processed)
+            chunked_entities_tree = nltk.ne_chunk(tagged_words_for_ner) # Requires maxent_ne_chunker and words
             iob_tags = nltk.chunk.util.tree2conlltags(chunked_entities_tree)
-            logging.info(f"Entity chunking successful. Number of IOB tags: {len(iob_tags)}")
+            logging.info(f"Entity chunking successful. Sample IOB: {iob_tags[:5]}")
         except Exception as e_ner:
-            logging.error(f"NLTK entity recognition FAILED. Error: {e_ner}\n{traceback.format_exc()}")
-            return jsonify({"error": "Entity recognition failed on the server. Check server logs."}), 500
+            logging.error(f"NLTK entity recognition FAILED: {e_ner}\n{traceback.format_exc()}")
+            return jsonify({"error": "Entity recognition failed. Check server logs."}), 500
 
         idx = 0
         while idx < len(iob_tags):
             word_from_iob, _, iob_label = iob_tags[idx] 
             if iob_label.startswith('B-') and iob_label[2:] == target_entity_type_query:
                 current_entity_words = [word_from_iob] 
-                entity_start_index_in_processed_list = idx
+                entity_start_idx = idx
                 next_idx = idx + 1
-                while next_idx < len(iob_tags):
-                    next_word_from_iob, _, next_iob_label = iob_tags[next_idx]
-                    if next_iob_label.startswith('I-') and next_iob_label[2:] == target_entity_type_query:
-                        current_entity_words.append(next_word_from_iob); next_idx += 1
-                    else: break
-                before = words_from_page_processed[max(0, entity_start_index_in_processed_list - backend_context_window_size): entity_start_index_in_processed_list]
+                while next_idx < len(iob_tags) and iob_tags[next_idx][2].startswith('I-') and iob_tags[next_idx][2][2:] == target_entity_type_query:
+                    current_entity_words.append(iob_tags[next_idx][0]); next_idx += 1
+                else: pass # break from inner while
+                
+                before = words_from_page_processed[max(0, entity_start_idx - backend_context_window_size): entity_start_idx]
                 after = words_from_page_processed[next_idx : next_idx + backend_context_window_size]
                 context_words_list = before + current_entity_words + after
                 results.append({
@@ -477,17 +265,76 @@ def kwic_search():
                 })
                 idx = next_idx
             else: idx += 1
-        # --- Entity検索ロジックここまで ---
-    
-    else: # Should have been caught by earlier validation, but as a safeguard
+    else:
         logging.warning(f"Unknown search_type encountered: {search_type}")
         return jsonify({"error": "Invalid search type specified."}), 400
 
-    # --- 最終的なレスポンス ---
-    if not results:
-        # `search_type == 'token'` の場合は、そのブロック内で専用の "not found" メッセージが返されるので、ここでは主に POS/Entity 用
-        processed_query_display = ' '.join(target_tokens_processed) if search_type == 'token' else query_input
-        logging.info(f"Query '{query_input}' (Type: {search_type}, Processed for display: '{processed_query_display}') not found.")
+    # --- ユーザーが追加したソートロジック (全ての検索タイプの結果に適用) ---
+    if results: # 結果がある場合のみソートを実行
+        logging.info(f"Applying custom sorting to {len(results)} results for query '{query_input}' (Type: {search_type}).")
+        pattern_groups = {}
+        for result_item in results: # 変数名を result から result_item に変更
+            # matched_end は context_words_list 内のインデックス
+            # context_words_list は before + matched_segment + after で構成
+            # result_item["matched_end"] は、context_words_list 内でのマッチ終了位置を示す
+            
+            # 正しくは、result_item["context_words"] と result_item["matched_end"] を使う
+            kwic_context_words = result_item["context_words"]
+            kwic_matched_end_idx = result_item["matched_end"]
+
+            if kwic_matched_end_idx < len(kwic_context_words):
+                next_words_segment = kwic_context_words[kwic_matched_end_idx:min(kwic_matched_end_idx + 3, len(kwic_context_words))]
+                pattern = " ".join(word.lower() for word in next_words_segment) # パターンは小文字化
+                if pattern not in pattern_groups:
+                    pattern_groups[pattern] = []
+                pattern_groups[pattern].append(result_item)
+            else: # マッチがコンテキストの末尾だった場合
+                pattern = "" # 空のパターンとして扱うか、あるいは別のデフォルト値
+                if pattern not in pattern_groups: # この処理が必要
+                    pattern_groups[pattern] = []
+                pattern_groups[pattern].append(result_item)
+
+
+        freq_and_pos_groups = {}
+        # pattern_groups に結果がない場合（全てのresultでマッチが末尾だったなど）の考慮
+        if pattern_groups:
+            for pattern, group in pattern_groups.items():
+                freq = len(group)
+                # 'matched_start' は context_words 内のインデックス。
+                # 元のテキストでの出現順でソートしたい場合は、original_text_index のような情報が必要。
+                # 現在の result_item には original_text_index がないので、
+                # ここでは group 内の最初の result_item の matched_start を使う (近似的)。
+                # より正確には、token検索で追加した original_text_index を全検索タイプで持つようにするべきだが、
+                # 今回はユーザー提供のソートロジックをできるだけ活かす。
+                # しかし、POS/Entity検索では original_text_index がないので、このソートは
+                # トークン検索の結果に対してのみ意図通りに働く可能性がある。
+                # ここでは、group内の最初の要素の `matched_start` と `context_words` を使う。
+                first_item_in_group = group[0]
+                # この first_pos は、あくまでそのKWICコンテキスト内でのマッチ開始位置。
+                # 全体での出現順ではない。
+                first_pos = first_item_in_group["matched_start"] 
+
+                if freq not in freq_and_pos_groups:
+                    freq_and_pos_groups[freq] = []
+                freq_and_pos_groups[freq].append((first_pos, pattern, group))
+        
+        sorted_results_final = []
+        if freq_and_pos_groups:
+            for freq in sorted(freq_and_pos_groups.keys(), reverse=True):
+                groups_at_freq = sorted(freq_and_pos_groups[freq], key=lambda x: x[0]) # first_pos (昇順)でソート
+                for _, _, group_items in groups_at_freq:
+                    sorted_results_final.extend(group_items)
+            results = sorted_results_final # ソートされた結果で上書き
+            logging.info(f"Sorting applied. Number of results remains: {len(results)}")
+        else: # pattern_groupsが空だった（全てのアイテムがマッチ末尾だったなど）
+            logging.info("No patterns to group by for sorting, returning results in original order of finding.")
+            # results は変更なし
+    # --- ソートロジックここまで ---
+
+
+    if not results: # 全ての検索タイプで結果がなかった場合
+        processed_query_display = ' '.join(target_tokens_processed) if search_type == 'token' and target_tokens_processed else query_input
+        logging.info(f"Query '{query_input}' (Type: {search_type}, Processed: '{processed_query_display}') not found.")
         return jsonify({
             "results": [],
             "error": f"The query '{processed_query_display}' (Type: {search_type}) was not found."
