@@ -1,5 +1,5 @@
 # --- Imports ---
-from flask import Flask, jsonify, request
+
 from flask_cors import CORS
 import re
 import urllib.request
@@ -20,6 +20,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import classification_report as sk_classification_report, accuracy_score
+from flask import Flask, request, jsonify
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -245,7 +246,18 @@ def kwic_search():
         sorted_tokens = [token for token, _ in token_counts.most_common()]
 
         if mode == '1':
-            results = contexts
+            # 頻出度順にソートして出力
+            results = []
+            for token in sorted_tokens:
+                # tokenごとにcontextsを抽出
+                token_contexts = [
+                    ctx for ctx in contexts
+                    if ctx["context_words"][ctx["matched_end"]] == token
+                ]
+                for ctx in token_contexts:
+                    ctx_with_token = ctx.copy()
+                    ctx_with_token["following_word"] = token
+                    results.append(ctx_with_token)
         elif mode == '2':
             for token in sorted_tokens:
                 token_results = {
@@ -256,53 +268,61 @@ def kwic_search():
                 results.append(token_results)
 
     elif mode == '3':
-    # query_inputがPOSタグ（NNPなど）ならその品詞を中心に前後5単語
-    target_tag = query_input
-    window = 5
-    try:
-        tagged_words = pos_tag(tokens_original)
-    except Exception as e:
-        logging.error(f"POS tagging failed: {e}\n{traceback.format_exc()}")
-        return jsonify({"error": "POS tagging failed."}), 500
+        # query_inputがPOSタグ（NN, NNPなど）の場合、その品詞のみ完全一致で検索
+        target_tag = query_input.strip().upper()
+        window = 5
+        try:
+            tagged_words = pos_tag(tokens_original)
+        except Exception as e:
+            logging.error(f"POS tagging failed: {e}\n{traceback.format_exc()}")
+            return jsonify({"error": "POS tagging failed."}), 500
 
-    contexts = []
-    freq_counter = Counter()
-    for idx, (word, tag) in enumerate(tagged_words):
-        if tag == target_tag:
-            start = max(0, idx - window)
-            end = min(len(tagged_words), idx + window + 1)
-            context_words = [w for w, t in tagged_words[start:end]]
-            matched_start = idx - start
-            matched_end = matched_start + 1
-            contexts.append({
-                "context_words": context_words,
-                "matched_start": matched_start,
-                "matched_end": matched_end,
+        # タグ一覧をログ出力（デバッグ用）
+        tags_in_text = set(tag for _, tag in tagged_words)
+        logging.info(f"POS tags in text: {sorted(tags_in_text)}")
+
+        if target_tag not in tags_in_text:
+            return jsonify({"results": [], "error": f"POS tag '{query_input}' not found in the text. Available tags: {', '.join(sorted(tags_in_text))}"}), 200
+
+        contexts = []
+        freq_counter = Counter()
+        for idx, (word, tag) in enumerate(tagged_words):
+            # 完全一致のみ
+            if tag == target_tag:
+                start = max(0, idx - window)
+                end = min(len(tagged_words), idx + window + 1)
+                context_words = [w for w, t in tagged_words[start:end]]
+                matched_start = idx - start
+                matched_end = matched_start + 1
+                contexts.append({
+                    "context_words": context_words,
+                    "matched_start": matched_start,
+                    "matched_end": matched_end,
+                    "center_word": word,
+                    "center_index": idx
+                })
+                freq_counter[word] += 1
+
+        if not contexts:
+            return jsonify({"results": [], "error": f"No matches found for POS tag '{query_input}'."}), 200
+
+        sorted_words = [word for word, _ in freq_counter.most_common()]
+        results = []
+        for word in sorted_words:
+            word_contexts = [
+                ctx for ctx in contexts if ctx["center_word"] == word
+            ]
+            results.append({
                 "center_word": word,
-                "center_index": idx
+                "count": freq_counter[word],
+                "contexts": word_contexts
             })
-            freq_counter[word] += 1
 
-    if not contexts:
-        return jsonify({"results": [], "error": f"No matches found for POS tag '{query_input}'."}), 200
-
-    sorted_words = [word for word, _ in freq_counter.most_common()]
-    results = []
-    for word in sorted_words:
-        word_contexts = [
-            ctx for ctx in contexts if ctx["center_word"] == word
-        ]
-        results.append({
-            "center_word": word,
-            "count": freq_counter[word],
-            "contexts": word_contexts
+        return jsonify({
+            "results": results,
+            "total_count": sum(freq_counter.values()),
+            "language": lang
         })
-
-    return jsonify({
-        "results": results,
-        "total_count": sum(freq_counter.values()),
-        "language": lang
-    })
 
     return jsonify({"results": results, "language": lang})
 
