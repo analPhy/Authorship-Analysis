@@ -320,139 +320,201 @@ def kwic_search():
         logging.error(f"KWIC URL processing error: {e_proc}\n{traceback.format_exc()}")
         return jsonify({"error": "Server error during URL processing."}), 500
 
-    results = []
+    # app.py の kwic_search 関数内
+
+# ... (関数の冒頭、doc_for_kwic の取得までは変更なし) ...
+# overall_word_frequencies の計算は、ページ全体の頻度が必要な場合に備えて残しても良いですが、
+# 今回のPOS検索のソートでは「検索結果内での頻度」を使うため、直接は使用しません。
+
+    results = [] # 最終結果を格納するリストを初期化
     backend_context_window_size = 10
 
-    if not _SPACY_NLP: # グローバル変数をチェック
-        return jsonify({"error": "NLP model (spaCy) is not available."}), 500
+    if not _SPACY_NLP:
+        logging.error("--- KWIC SEARCH ERROR: spaCy NLP model (_SPACY_NLP) is None! ---")
+        return jsonify({"error": "NLP model is not available. Cannot process search."}), 500
     try:
-        doc_for_kwic = _SPACY_NLP(text_content)
+        doc_for_kwic = _SPACY_NLP(text_content) # text_content は事前に取得・クリーン済みとします
     except Exception as e_spa_proc:
         logging.error(f"spaCy processing failed for KWIC: {e_spa_proc}\n{traceback.format_exc()}")
         return jsonify({"error": "Text processing (spaCy) failed."}), 500
 
+
     if search_type == 'token':
+        # --- Token検索のロジック (前回の後続単語1つの頻度ソートを維持) ---
         raw_target_tokens = query_input.split()
         target_tokens_processed_lower = [remove_punctuation_from_token(word).lower() for word in raw_target_tokens if remove_punctuation_from_token(word)]
         if not target_tokens_processed_lower or not (1 <= len(target_tokens_processed_lower) <= 5):
             return jsonify({"error": "Token query must be 1-5 words after punctuation removal."}), 400
         
         num_target_tokens = len(target_tokens_processed_lower)
-        all_observed_following_words = [] # ソート用
-
+        all_observed_following_words_for_token_sort = [] 
+        
+        # token検索では、まずマッチ箇所を results に追加
         for i in range(len(doc_for_kwic) - num_target_tokens + 1):
             candidate_doc_tokens = [doc_for_kwic[j] for j in range(i, i + num_target_tokens)]
-            candidate_processed_lower = [remove_punctuation_from_token(t.text).lower() for t in candidate_doc_tokens if remove_punctuation_from_token(t.text)]
-            
+            candidate_processed_lower = [
+                token_text_lower for tok in candidate_doc_tokens 
+                if (token_text_lower := remove_punctuation_from_token(tok.text).lower())
+            ]
             if len(candidate_processed_lower) == num_target_tokens and candidate_processed_lower == target_tokens_processed_lower:
                 start_context_idx = max(0, i - backend_context_window_size)
                 end_context_idx = min(len(doc_for_kwic), i + num_target_tokens + backend_context_window_size)
                 context_words_list = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
                 matched_start_in_context = i - start_context_idx
                 matched_end_in_context = matched_start_in_context + num_target_tokens
-                
-                current_following_word = ""
+                current_following_word_1 = ""
                 following_token_idx_in_doc = i + num_target_tokens
                 if following_token_idx_in_doc < len(doc_for_kwic):
-                    current_following_word = doc_for_kwic[following_token_idx_in_doc].text.lower()
-                    all_observed_following_words.append(current_following_word)
-
+                    current_following_word_1 = doc_for_kwic[following_token_idx_in_doc].text.lower()
+                    processed_fw1 = remove_punctuation_from_token(current_following_word_1)
+                    if processed_fw1:
+                         all_observed_following_words_for_token_sort.append(processed_fw1)
                 results.append({
                     "context_words": context_words_list,
                     "matched_start": matched_start_in_context,
                     "matched_end": matched_end_in_context,
                     "original_text_index": i, 
-                    "raw_following_word": current_following_word
+                    "raw_following_word": remove_punctuation_from_token(current_following_word_1) # 正規化して保持
                 })
-        # ソートのために一度resultsを仮変数に移す（もしソートする場合）
-        # search_type が 'token' で、結果が1件以上あれば、常に後続単語頻度でソートする
-        if results: 
-            logging.info(f"Token search found {len(results)} matches. Proceeding to sort by following word frequency.")
-            overall_following_word_frequencies = Counter(all_observed_following_words)
-            
-            # 各結果アイテムに、その後続単語の全体頻度情報を追加
+        
+        if results: # token検索の結果があれば、後続単語1つの頻度でソート
+            logging.info(f"Token search found {len(results)} matches. Sorting by 1st following word frequency.")
+            current_overall_following_word_frequencies = Counter(all_observed_following_words_for_token_sort)
             for item in results:
-                item['overall_following_word_frequency'] = overall_following_word_frequencies.get(item['raw_following_word'], 0)
-            
-            # 後続単語の全体頻度で降順、同じ場合は元のテキストでの出現順（昇順）でソート
+                item['overall_following_word_frequency'] = current_overall_following_word_frequencies.get(item['raw_following_word'], 0)
             results.sort(key=lambda x: (-x.get('overall_following_word_frequency', 0), x.get('original_text_index', 0)))
-            
-            # デバッグ用にソート後の情報を少しログに出力 (本番ではコメントアウトしてもOK)
-            # logging.info("--- Token search results after sorting (first 3) ---")
-            # for item_debug in results[:3]:
-            #     logging.info(f"  Context: {' '.join(item_debug['context_words'])[:50]}..., Freq: {item_debug.get('overall_following_word_frequency', 'N/A')}, Index: {item_debug.get('original_text_index', 'N/A')}")
-        else:
-            logging.info("Token search found no matches.")
+        # --- Token検索のロジックここまで ---
 
     elif search_type == 'pos':
+        # --- POS検索のロジック (ユーザーの新しいソート要望に対応) ---
         target_pos_tag_query = query_input.strip().upper()
         if not target_pos_tag_query or " " in target_pos_tag_query:
              return jsonify({"error": "For POS search, enter a single valid tag."}), 400
+
+        # 1. マッチするアイテムを全て収集し、必要な情報を付加
+        raw_results_for_pos_sort = [] 
         for i, token in enumerate(doc_for_kwic):
             if token.tag_ == target_pos_tag_query:
                 start_context_idx = max(0, i - backend_context_window_size)
                 end_context_idx = min(len(doc_for_kwic), i + 1 + backend_context_window_size)
                 context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
                 matched_start_in_context = i - start_context_idx
-                results.append({
+                
+                matched_nnp_text_original = token.text
+                # マッチしたNNP自体を正規化 (小文字化、句読点除去)
+                matched_nnp_text_processed = remove_punctuation_from_token(matched_nnp_text_original).lower()
+
+                # 直後の単語(1つ目)を正規化
+                following_word_1_processed = ""
+                if i + 1 < len(doc_for_kwic):
+                    fw1_raw = doc_for_kwic[i + 1].text
+                    following_word_1_processed = remove_punctuation_from_token(fw1_raw).lower()
+                
+                raw_results_for_pos_sort.append({
                     "context_words": context_doc_tokens,
                     "matched_start": matched_start_in_context,
-                    "matched_end": matched_start_in_context + 1
+                    "matched_end": matched_start_in_context + 1,
+                    "original_text_index": i,
+                    "matched_word_text_original": matched_nnp_text_original, # 表示用
+                    "matched_nnp_text_processed": matched_nnp_text_processed, # NNP自体の頻度計算用
+                    "following_word_1_processed": following_word_1_processed # 後続単語の頻度計算用
                 })
+        
+        if raw_results_for_pos_sort:
+            # 2. 「検索結果内」での頻度情報を計算して各アイテムに追加
+            # 2a. マッチしたNNP自体の頻度
+            nnp_texts_in_results = [item['matched_nnp_text_processed'] for item in raw_results_for_pos_sort if item['matched_nnp_text_processed']]
+            nnp_frequencies_in_results = Counter(nnp_texts_in_results)
+            for item in raw_results_for_pos_sort:
+                item['matched_nnp_freq_in_results'] = nnp_frequencies_in_results.get(item['matched_nnp_text_processed'], 0)
+
+            # 2b. 直後に続く単語(1つ目)の頻度
+            all_following_words_in_pos_results = [item['following_word_1_processed'] for item in raw_results_for_pos_sort if item['following_word_1_processed']]
+            following_word_freq_in_pos_results = Counter(all_following_words_in_pos_results)
+            for item in raw_results_for_pos_sort:
+                item['following_word_1_freq_in_results'] = following_word_freq_in_pos_results.get(item['following_word_1_processed'], 0)
+            
+            # 3. 新しいキーでソート
+            raw_results_for_pos_sort.sort(key=lambda x: (
+                -x.get('matched_nnp_freq_in_results', 0),      # キー1: マッチしたNNP自体の頻度 (降順)
+                -x.get('following_word_1_freq_in_results', 0),# キー2: 後続単語1の頻度 (降順)
+                x.get('original_text_index', 0)                # キー3: 元の出現位置 (昇順)
+            ))
+            results = raw_results_for_pos_sort # ソートされた結果を最終結果に
+            logging.info(f"POS search (NNP) results sorted by NNP_freq_in_results, then by 1st_following_word_freq_in_results.")
+            # デバッグログ (最初の数件)
+            logging.info("--- After POS specific sort (first 5 items) ---")
+            for i_debug, item_debug in enumerate(results[:5]):
+                logging.info(f"  Item {i_debug}: NNP='{item_debug['matched_nnp_text_processed']}'(freq={item_debug['matched_nnp_freq_in_results']}), "
+                             f"NextWord='{item_debug['following_word_1_processed']}'(freq={item_debug['following_word_1_freq_in_results']}), "
+                             f"OrigIdx={item_debug['original_text_index']}")
+        else:
+            results = [] # マッチがなければ空
+        # --- POS検索のロジックここまで ---
 
     elif search_type == 'entity':
+        # --- Entity検索のロジック (ソートは元のまま or 別途調整) ---
         target_entity_type_query = query_input.strip().upper()
         if not target_entity_type_query or " " in target_entity_type_query:
             return jsonify({"error": "For Entity search, enter a single valid entity type."}), 400
-        for ent in doc_for_kwic.ents:
+        
+        # Entity検索でも同様のソートをしたい場合は、POS検索と似た情報収集とソート処理が必要
+        # ここでは、簡単のため出現順とし、もし sort_method=='pos' が指定されたら
+        # 以前の「後続単語の品詞タグ頻度」ソートを行う
+        temp_entity_results = []
+        for ent_idx, ent in enumerate(doc_for_kwic.ents):
             if ent.label_.upper() == target_entity_type_query:
                 start_token_idx = ent.start
-                end_token_idx = ent.end
+                end_token_idx = ent.end # spaCyのent.endはスライスの終点なので+1不要
+                item_match_len = end_token_idx - start_token_idx
+
                 start_context_idx = max(0, start_token_idx - backend_context_window_size)
                 end_context_idx = min(len(doc_for_kwic), end_token_idx + backend_context_window_size)
                 context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
                 matched_start_in_context = start_token_idx - start_context_idx
-                results.append({
+                
+                temp_entity_results.append({
                     "context_words": context_doc_tokens,
                     "matched_start": matched_start_in_context,
-                    "matched_end": matched_start_in_context + (end_token_idx - start_token_idx)
+                    "matched_end": matched_start_in_context + item_match_len,
+                    "original_text_index": start_token_idx # エンティティの開始位置
+                    # 必要ならここに "matched_entity_text_processed" や "following_word_1_processed" も追加
                 })
+        results = temp_entity_results # この時点では出現順
 
+        # Entity検索の結果に対して、もし sort_method == 'pos' が指定されたら、
+        # 以前の「後続単語の品詞タグ頻度」ソートを適用 (これはオプション)
+        if results and sort_method == 'pos':
+            logging.info(f"Applying 'following word POS tag frequency' sort to ENTITY search results.")
+            pos_groups = {}
+            for res_item in results:
+                item_start_idx_in_doc = res_item.get("original_text_index")
+                item_match_len_val = res_item["matched_end"] - res_item["matched_start"]
+                if item_start_idx_in_doc is not None:
+                    next_token_global_idx = item_start_idx_in_doc + item_match_len_val
+                    if next_token_global_idx < len(doc_for_kwic):
+                        next_word_token_obj = doc_for_kwic[next_token_global_idx]
+                        pos_tag = next_word_token_obj.tag_
+                        pos_groups.setdefault(pos_tag, []).append(res_item)
+            if pos_groups:
+                temp_list_entity_pos_sort = []
+                for tag, group_items in sorted(pos_groups.items(), key=lambda x: (-len(x[1]), x[0])):
+                    temp_list_entity_pos_sort.extend(sorted(group_items, key=lambda x: x.get("original_text_index", 0)))
+                results = temp_list_entity_pos_sort # Entity検索結果をPOSタグ頻度でソート
+        # --- Entity検索のロジックここまで ---
+
+
+    # --- 共通の処理 (結果がない場合) ---
     if not results:
         return jsonify({"results": [], "error": f"Query '{query_input}' (Type: {search_type}) not found."}), 200
 
-    sorted_results = results # デフォルト
-    if sort_method == 'pos' and search_type != 'token':
-        logging.info(f"Applying POS sort to '{search_type}' search results.")
-        pos_groups = {}
-        for res_item in results: # results はこの時点でPOSまたはEntityの検索結果 (出現順のはず)
-            item_start_idx_in_doc = res_item.get("original_text_index") 
-            # マッチした部分の長さを計算 (POSは1、Entityは可変)
-            item_match_len = res_item["matched_end"] - res_item["matched_start"]
-            
-            if item_start_idx_in_doc is not None:
-                next_token_global_idx = item_start_idx_in_doc + item_match_len # マッチの次のトークンのインデックス
-                if next_token_global_idx < len(doc_for_kwic):
-                    next_word_token_obj = doc_for_kwic[next_token_global_idx]
-                    pos_tag = next_word_token_obj.tag_
-                    pos_groups.setdefault(pos_tag, []).append(res_item)
-                # else: マッチがテキストの末尾で、次のトークンがない場合は何もしない
-            # else: original_text_index がないアイテムはPOSソートから除外 (現状の実装ではPOS/Entity検索結果に含めているはず)
-        
-        if pos_groups:
-            temp_list = []
-            # グループを、(アイテム数が多い順 -> 品詞タグ名順) でソート
-            for tag, group_items in sorted(pos_groups.items(), key=lambda x: (-len(x[1]), x[0])):
-                # 各グループ内を、元のテキストでの出現順でソート
-                temp_list.extend(sorted(group_items, key=lambda x: x.get("original_text_index", 0)))
-            sorted_results = temp_list
-        else:
-            logging.info("No groups formed for POS sorting, results remain as is.")
-    # else if sort_method == 'token': (search_type が 'token' の場合は既にソート済みなので、ここでは何もしない)
-    #     pass
+    # 最終的なレスポンス (この時点で results は各検索タイプに応じたソートがされているはず)
+    # sort_method パラメータによる追加の汎用ソートはここでは行わない
+    # (各検索タイプが自身のデフォルトソートまたは専用ソートロジックを持つため)
+    logging.info(f"KWIC search successful. Returning {len(results)} results for type '{search_type}'.")
+    return jsonify({"results": results})
 
-    logging.info(f"KWIC search successful. Returning {len(sorted_results)} results for type '{search_type}' with sort '{sort_method}'.")
-    return jsonify({"results": sorted_results})
+# ... (authorship_analysis 関数 と if __name__ == "__main__": は変更なし) ...
 
 
 @app.route('/api/authorship', methods=['POST'])
