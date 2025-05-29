@@ -1,58 +1,47 @@
-# download_nltk.py
 import nltk
 import sys
 import os
 
 nltk_data_dir = '/opt/render/nltk_data'
-# NLTK_DATA環境変数を設定し、検索パスに明示的に追加する
-# (Renderの環境変数で設定されていれば不要な場合もあるが、念のため)
-os.environ['NLTK_DATA'] = nltk_data_dir
+os.environ['NLTK_DATA'] = nltk_data_dir # NLTKがどこを探すべきか確実に伝える
 if nltk_data_dir not in nltk.data.path:
     nltk.data.path.append(nltk_data_dir)
 
-print(f'--- Starting NLTK Resource Download to {nltk_data_dir} ---')
-print(f'NLTK search paths: {nltk.data.path}')
+print(f'--- NLTKビルドステップ: NLTKデータパス確認: {nltk.data.path} ---')
 
-resources_to_download = [
-    ('averaged_perceptron_tagger_eng', 'taggers/averaged_perceptron_tagger_eng'),
-    ('punkt', 'tokenizers/punkt'),
-    ('words', 'corpora/words'),
-    ('maxent_ne_chunker', 'chunkers/maxent_ne_chunker'),
-    ('maxent_ne_chunker_tab', 'chunkers/maxent_ne_chunker_tab')
-]
+# ダウンロードと検証を行うNLTKリソースの辞書 (キー: download ID, 値: findで使うパス)
+resources_to_verify = {
+    'averaged_perceptron_tagger_eng': 'taggers/averaged_perceptron_tagger_eng',
+    'punkt': 'tokenizers/punkt',
+    'words': 'corpora/words',
+    'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
+    'maxent_ne_chunker_tab': 'chunkers/maxent_ne_chunker_tab'
+}
 
-all_downloads_successful = True
-for res_id, res_path_check in resources_to_download:
-    print(f'Attempting to download NLTK resource: {res_id}')
+all_resources_ok = True
+
+for res_id, res_check_path in resources_to_verify.items():
     try:
-        # まず存在確認
+        print(f'NLTKリソース確認: {res_id} (期待されるパス: {res_check_path})')
+        nltk.data.find(res_check_path)
+        print(f'リソース {res_id} は既に存在します。')
+    except LookupError:
+        print(f'リソース {res_id} が見つかりません。ダウンロードを試みます...')
         try:
-            nltk.data.find(res_path_check)
-            print(f'Resource {res_id} already exists at {res_path_check}. Skipping download.')
-            continue # 既に存在すればダウンロードしない
-        except LookupError:
-            pass # 存在しない場合はダウンロードへ
+            if nltk.download(res_id, download_dir=nltk_data_dir, quiet=False, raise_on_error=True): # quiet=Falseで詳細ログ、raise_on_error=Trueでエラー時に例外発生
+                print(f'{res_id} のダウンロードに成功しました。検証中...')
+                nltk.data.find(res_check_path) # ダウンロード後に再度検証
+                print(f'リソース {res_id} のダウンロード後の検証に成功しました。')
+            else:
+                # raise_on_error=True のため、通常ここには到達しないはず
+                print(f'エラー: nltk.download({res_id}) がFalseを返しました。')
+                all_resources_ok = False
+        except Exception as e:
+            print(f'エラー: {res_id} のダウンロードまたは検証中に例外が発生しました: {e}')
+            all_resources_ok = False
 
-        if nltk.download(res_id, download_dir=nltk_data_dir, quiet=False, raise_on_error=True):
-            print(f'Successfully downloaded NLTK resource: {res_id}')
-            # ダウンロード後にもう一度存在確認
-            try:
-                nltk.data.find(res_path_check)
-                print(f'Verified resource {res_id} at {res_path_check} after download.')
-            except LookupError:
-                print(f'ERROR: Resource {res_id} NOT FOUND at {res_path_check} even after attempting download.')
-                all_downloads_successful = False
-        else:
-            # nltk.downloadがFalseを返した場合 (raise_on_error=Falseの時など)
-            print(f'ERROR: nltk.download returned False for {res_id}. Download may have failed.')
-            all_downloads_successful = False
-    except Exception as e:
-        print(f'ERROR: Exception occurred while downloading NLTK resource {res_id}: {e}')
-        all_downloads_successful = False
-
-print('--- NLTK Resource Download Finished ---')
-if not all_downloads_successful:
-    print('CRITICAL: One or more NLTK resources failed to download or verify. Failing build.')
-    sys.exit(1)
+if not all_resources_ok:
+    print('致命的なビルドエラー: 1つ以上のNLTKリソースのダウンロードまたは検証に失敗しました。')
+    sys.exit(1) # ビルドを失敗させる
 else:
-    print('All NLTK resources downloaded and verified successfully.')
+    print('指定されたすべてのNLTKリソースのダウンロードと検証にビルド中に成功しました。')
