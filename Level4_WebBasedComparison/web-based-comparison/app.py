@@ -365,15 +365,24 @@ def kwic_search():
                     "raw_following_word": current_following_word
                 })
         # ソートのために一度resultsを仮変数に移す（もしソートする場合）
-        if results and sort_method == 'token': # 'token'ソートはtoken検索の結果にのみ適用
-            temp_results_for_sorting = results
+        # search_type が 'token' で、結果が1件以上あれば、常に後続単語頻度でソートする
+        if results: 
+            logging.info(f"Token search found {len(results)} matches. Proceeding to sort by following word frequency.")
             overall_following_word_frequencies = Counter(all_observed_following_words)
-            results_with_frequency_info = []
-            for item in temp_results_for_sorting:
+            
+            # 各結果アイテムに、その後続単語の全体頻度情報を追加
+            for item in results:
                 item['overall_following_word_frequency'] = overall_following_word_frequencies.get(item['raw_following_word'], 0)
-                results_with_frequency_info.append(item)
-            results_with_frequency_info.sort(key=lambda x: (-x['overall_following_word_frequency'], x['original_text_index']))
-            results = results_with_frequency_info # ソート済み結果で上書き
+            
+            # 後続単語の全体頻度で降順、同じ場合は元のテキストでの出現順（昇順）でソート
+            results.sort(key=lambda x: (-x.get('overall_following_word_frequency', 0), x.get('original_text_index', 0)))
+            
+            # デバッグ用にソート後の情報を少しログに出力 (本番ではコメントアウトしてもOK)
+            # logging.info("--- Token search results after sorting (first 3) ---")
+            # for item_debug in results[:3]:
+            #     logging.info(f"  Context: {' '.join(item_debug['context_words'])[:50]}..., Freq: {item_debug.get('overall_following_word_frequency', 'N/A')}, Index: {item_debug.get('original_text_index', 'N/A')}")
+        else:
+            logging.info("Token search found no matches.")
 
     elif search_type == 'pos':
         target_pos_tag_query = query_input.strip().upper()
@@ -413,24 +422,36 @@ def kwic_search():
         return jsonify({"results": [], "error": f"Query '{query_input}' (Type: {search_type}) not found."}), 200
 
     sorted_results = results # デフォルト
-    if sort_method == 'pos' and search_type != 'token': # POSソート (token検索以外の場合)
+    if sort_method == 'pos' and search_type != 'token':
+        logging.info(f"Applying POS sort to '{search_type}' search results.")
         pos_groups = {}
-        for res_item in results:
-            context = res_item['context_words']
-            match_end = res_item['matched_end']
-            if match_end < len(context):
-                next_word = context[match_end]
-                next_word_doc = _SPACY_NLP(next_word)
-                if next_word_doc and len(next_word_doc) > 0:
-                    pos_tag = next_word_doc[0].tag_
+        for res_item in results: # results はこの時点でPOSまたはEntityの検索結果 (出現順のはず)
+            item_start_idx_in_doc = res_item.get("original_text_index") 
+            # マッチした部分の長さを計算 (POSは1、Entityは可変)
+            item_match_len = res_item["matched_end"] - res_item["matched_start"]
+            
+            if item_start_idx_in_doc is not None:
+                next_token_global_idx = item_start_idx_in_doc + item_match_len # マッチの次のトークンのインデックス
+                if next_token_global_idx < len(doc_for_kwic):
+                    next_word_token_obj = doc_for_kwic[next_token_global_idx]
+                    pos_tag = next_word_token_obj.tag_
                     pos_groups.setdefault(pos_tag, []).append(res_item)
+                # else: マッチがテキストの末尾で、次のトークンがない場合は何もしない
+            # else: original_text_index がないアイテムはPOSソートから除外 (現状の実装ではPOS/Entity検索結果に含めているはず)
+        
         if pos_groups:
             temp_list = []
-            for tag, group in sorted(pos_groups.items(), key=lambda x: len(x[1]), reverse=True):
-                temp_list.extend(group)
+            # グループを、(アイテム数が多い順 -> 品詞タグ名順) でソート
+            for tag, group_items in sorted(pos_groups.items(), key=lambda x: (-len(x[1]), x[0])):
+                # 各グループ内を、元のテキストでの出現順でソート
+                temp_list.extend(sorted(group_items, key=lambda x: x.get("original_text_index", 0)))
             sorted_results = temp_list
-    
-    logging.info(f"KWIC search successful. Returning {len(sorted_results)} results.")
+        else:
+            logging.info("No groups formed for POS sorting, results remain as is.")
+    # else if sort_method == 'token': (search_type が 'token' の場合は既にソート済みなので、ここでは何もしない)
+    #     pass
+
+    logging.info(f"KWIC search successful. Returning {len(sorted_results)} results for type '{search_type}' with sort '{sort_method}'.")
     return jsonify({"results": sorted_results})
 
 
