@@ -180,7 +180,7 @@ def kwic_search():
         return jsonify({"error": "Enter 1 to 5 words for the target phrase."}), 400
 
     # Map search_type to internal mode
-    type_map = {'token': '1', 'pos': '3', 'entity': '2'}  # ←ここを修正
+    type_map = {'token': '1', 'pos': '3', 'entity': '2'}
     if search_type not in type_map:
         return jsonify({"error": "Invalid mode. Please choose 'token', 'pos', or 'entity'."}), 400
     mode = type_map[search_type]
@@ -246,19 +246,21 @@ def kwic_search():
         sorted_tokens = [token for token, _ in token_counts.most_common()]
 
         if mode == '1':
-            # 頻出度順にソートして出力
+            # Sequential Results: Sort by token frequency first, then display all occurrences
             results = []
             for token in sorted_tokens:
-                # tokenごとにcontextsを抽出
+                # Extract contexts for this token
                 token_contexts = [
                     ctx for ctx in contexts
                     if ctx["context_words"][ctx["matched_end"]] == token
                 ]
+                # Add each context with token information
                 for ctx in token_contexts:
                     ctx_with_token = ctx.copy()
                     ctx_with_token["following_word"] = token
                     results.append(ctx_with_token)
         elif mode == '2':
+            # Most Frequent Tokens: Group by token with frequency count
             for token in sorted_tokens:
                 token_results = {
                     "following_word": token,
@@ -268,7 +270,7 @@ def kwic_search():
                 results.append(token_results)
 
     elif mode == '3':
-        # query_inputがPOSタグ（NN, NNPなど）の場合、その品詞のみ完全一致で検索
+        # Most Frequent POS Tags: Group by POS tag with frequency count
         target_tag = query_input.strip().upper()
         window = 5
         try:
@@ -277,7 +279,7 @@ def kwic_search():
             logging.error(f"POS tagging failed: {e}\n{traceback.format_exc()}")
             return jsonify({"error": "POS tagging failed."}), 500
 
-        # タグ一覧をログ出力（デバッグ用）
+        # Log available tags for debugging
         tags_in_text = set(tag for _, tag in tagged_words)
         logging.info(f"POS tags in text: {sorted(tags_in_text)}")
 
@@ -287,7 +289,7 @@ def kwic_search():
         contexts = []
         freq_counter = Counter()
         for idx, (word, tag) in enumerate(tagged_words):
-            # 完全一致のみ
+            # Exact match only
             if tag == target_tag:
                 start = max(0, idx - window)
                 end = min(len(tagged_words), idx + window + 1)
@@ -306,6 +308,7 @@ def kwic_search():
         if not contexts:
             return jsonify({"results": [], "error": f"No matches found for POS tag '{query_input}'."}), 200
 
+        # Sort words by frequency
         sorted_words = [word for word, _ in freq_counter.most_common()]
         results = []
         for word in sorted_words:
