@@ -7,43 +7,50 @@ from flask_cors import CORS
 import re
 import urllib.request
 from urllib.error import URLError, HTTPError
-import nltk # 著者分析で一部使用
-from nltk.tokenize import word_tokenize # 著者分析のデフォルトトークナイザとして使用
+import nltk 
+from nltk.tokenize import word_tokenize
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import traceback
 import logging
 import sys
 import string
-import os # 環境変数やパス操作のため
-# import subprocess # Build Command で spaCy モデルをダウンロードするため、アプリ内でのフォールバックは削除
-import spacy # spaCyをインポート
+import os
+import spacy
 
-# --- spaCyモデルとNLTKデータパスのグローバル設定 ---
+# --- グローバル変数と初期化設定 ---
 _SPACY_NLP = None
-_NLTK_DATA_DIR = os.environ.get('NLTK_DATA', '/opt/render/project/src/nltk_data_on_render') # download_nltk.py と同じパス
+# RenderのRoot Directoryを基準としたNLTKデータディレクトリの期待パス
+_APP_ROOT_ON_RENDER = '/opt/render/project/src/Level4_WebBasedComparison/web-based-comparison' # RenderのRoot Directory設定に合わせる
+_NLTK_DATA_DIR_IN_REPO = 'nltk_data_on_render' # アプリケーションルート直下のフォルダ名
+_EXPECTED_NLTK_DATA_PATH = os.path.join(_APP_ROOT_ON_RENDER, _NLTK_DATA_DIR_IN_REPO)
+
+# 環境変数NLTK_DATAを最優先、次に上記で構成したパス、最終フォールバックはnltkデフォルト
+_NLTK_DATA_DIR = os.environ.get('NLTK_DATA', _EXPECTED_NLTK_DATA_PATH)
+
 
 def initialize_nlp_resources():
     global _SPACY_NLP
-    global _NLTK_DATA_DIR
+    global _NLTK_DATA_DIR # この関数内でグローバル変数を参照
 
     # spaCyモデルのロード
+    print("--- [APP STARTUP] Attempting to load spaCy model 'en_core_web_sm'... ---")
     try:
-        _SPACY_NLP = spacy.load("en_core_web_sm") # Build Commandでダウンロードしたモデル名を指定
+        _SPACY_NLP = spacy.load("en_core_web_sm")
         print("--- [APP STARTUP] spaCy model 'en_core_web_sm' loaded successfully. ---")
     except OSError as e:
         print(f"--- [APP STARTUP] CRITICAL ERROR: spaCy model 'en_core_web_sm' not found or failed to load: {e} ---")
-        print("--- [APP STARTUP] Please ensure it is downloaded in the Build Command (e.g., python -m spacy download en_core_web_sm). ---")
-        print("--- [APP STARTUP] Exiting application. ---")
+        print("--- [APP STARTUP] Ensure 'python -m spacy download en_core_web_sm' was run in Build Command. ---")
         sys.exit(1)
     except Exception as e_spacy_unexpected:
         print(f"--- [APP STARTUP] An unexpected error occurred while loading spaCy model: {e_spacy_unexpected} ---")
         sys.exit(1)
 
-    # NLTKデータパスの設定
-    print(f"--- [APP STARTUP PRE-CHECK] Expected NLTK_DATA directory: {_NLTK_DATA_DIR} (from ENV or default) ---")
+    # NLTKデータパスの設定と確認
+    print(f"--- [APP STARTUP PRE-CHECK] Effective NLTK_DATA directory to be used: {_NLTK_DATA_DIR} ---")
     if not os.path.isdir(_NLTK_DATA_DIR):
-        print(f"--- [APP STARTUP PRE-CHECK] CRITICAL ERROR: NLTK data directory '{_NLTK_DATA_DIR}' does NOT exist. This should have been created by the build script. ---")
+        print(f"--- [APP STARTUP PRE-CHECK] CRITICAL ERROR: NLTK data directory '{_NLTK_DATA_DIR}' does NOT exist. ---")
+        print(f"--- [APP STARTUP PRE-CHECK] This directory should have been created by 'download_nltk_for_authorship.py' during build. ---")
         sys.exit(1)
     else:
         print(f"--- [APP STARTUP PRE-CHECK] NLTK data directory '{_NLTK_DATA_DIR}' exists. ---")
@@ -58,9 +65,10 @@ def initialize_nlp_resources():
         'words': 'corpora/words'    # stopwordsisoが依存
     }
     all_nltk_ok_for_authorship = True
-    print("--- [APP STARTUP] Checking NLTK resources for Authorship... ---")
+    print("--- [APP STARTUP] Checking NLTK resources required for Authorship Analysis... ---")
     for res_id, res_check_path in required_nltk_for_authorship.items():
         try:
+            # nltk.data.find は nltk.data.path 内の各パスに res_check_path を結合して探す
             nltk.data.find(res_check_path)
             print(f"--- [APP STARTUP]   [FOUND] NLTK resource for Authorship: {res_id} (Path: {res_check_path}) ---")
         except LookupError:
@@ -68,9 +76,8 @@ def initialize_nlp_resources():
             all_nltk_ok_for_authorship = False
     
     if not all_nltk_ok_for_authorship:
-        print("--- [APP STARTUP] CRITICAL ERROR: Not all NLTK resources for authorship were found. ---")
-        print("--- [APP STARTUP] This indicates an issue with the 'download_nltk_for_authorship.py' script in Build Command. ---")
-        print("--- [APP STARTUP] Exiting application. ---")
+        print("--- [APP STARTUP] CRITICAL ERROR: Not all required NLTK resources for authorship were found. ---")
+        print("--- [APP STARTUP] This indicates an issue with 'download_nltk_for_authorship.py' in Build Command or NLTK_DATA path. ---")
         sys.exit(1)
     else:
         print("--- [APP STARTUP] All required NLTK resources for authorship are available. ---")
@@ -79,13 +86,13 @@ def initialize_nlp_resources():
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-    stream=sys.stdout
+    stream=sys.stdout # Renderはstdout/stderrのログを収集するのでこれでOK
 )
 
-# NLPリソースの初期化を実行
+# アプリケーション起動時にNLPリソースを初期化
 initialize_nlp_resources()
 
-# --- Authorship Attribution Imports ---
+# --- Authorship Attribution Imports (initialize_nlp_resourcesの後) ---
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
@@ -102,17 +109,22 @@ _TAGGER = None
 try:
     _TAGGER = fugashi.Tagger()
     logging.info("fugashi Tagger initialized successfully.")
-except Exception as e:
-    logging.error(f"Failed to initialize fugashi Tagger: {e}. Japanese tokenization for authorship will not work.")
+except Exception as e_fugashi:
+    logging.error(f"Failed to initialize fugashi Tagger: {e_fugashi}. Japanese tokenization for authorship will be limited.")
 
 _EN_SW = set()
 _JA_SW = set()
 try:
-    _EN_SW = stopwords("en")
-    _JA_SW = stopwords("ja")
-    logging.info("English and Japanese stopwords (for authorship) loaded.")
-except Exception as e:
-    logging.error(f"Failed to load stopwords (for authorship): {e}")
+    if nltk.data.find('corpora/words'): # wordsコーパスが利用可能か確認
+        _EN_SW = stopwords("en")
+    if nltk.data.find('corpora/words'): # 日本語ストップワードもwordsに依存する場合がある(stopwordsisoの実装による)
+        _JA_SW = stopwords("ja")
+    if _EN_SW or _JA_SW:
+        logging.info("English and/or Japanese stopwords (for authorship) loaded.")
+    else:
+        logging.warning("Could not load stopwords for authorship.")
+except Exception as e_stopwords:
+    logging.error(f"Failed to load stopwords (for authorship): {e_stopwords}")
 
 _ALL_SW = sorted(list(_EN_SW.union(_JA_SW)))
 _SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+")
@@ -121,7 +133,7 @@ _SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+")
 app = Flask(__name__)
 FRONTEND_GITHUB_PAGES_ORIGIN = "https://analphy.github.io"
 FRONTEND_DEV_ORIGIN_3000 = "http://localhost:3000"
-FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080" # 以前使っていたポート
+FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080"
 allowed_origins_list = [
     FRONTEND_GITHUB_PAGES_ORIGIN,
     FRONTEND_DEV_ORIGIN_3000,
@@ -132,7 +144,7 @@ print("--- [APP STARTUP] Flask application initialized and CORS configured. ---"
 logging.info("Application setup complete. Ready for requests.")
 
 
-# === Text processing for KWIC Search (Functions from original code, modified where needed) ===
+# === Text processing for KWIC Search ===
 def get_text_from_url_for_kwic(url):
     logging.info(f"Attempting to fetch URL (for KWIC search): {url}")
     try:
@@ -150,65 +162,84 @@ def get_text_from_url_for_kwic(url):
                  raise ValueError(f"The provided URL does not appear to be an HTML page. (Content-Type: {content_type})")
             html = response.read()
         soup = BeautifulSoup(html, 'html.parser')
-        for tag in soup(['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
+        for tag_to_remove in soup(['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
                         'nav', 'footer', 'aside', 'form', 'input', 'button', 'img',
                         'audio', 'video', 'iframe', 'object', 'embed', 'header', 'svg', 'canvas']):
-            tag.decompose()
+            tag_to_remove.decompose()
         content = soup.find(id='mw-content-text')
         if content:
-            wiki_elements = ['toc', 'reference', 'reflist', 'navbox', 'metadata', 'catlinks', 
+            wiki_elements_to_remove = ['toc', 'reference', 'reflist', 'navbox', 'metadata', 'catlinks', 
                            'mw-editsection', 'mw-references', 'mw-navigation', 'mw-footer',
                            'sistersitebox', 'noprint', 'mw-jump-to-nav', 'mw-indicator',
                            'mw-wiki-logo', 'mw-page-tools', 'printfooter', 'mw-revision']
-            for element in content.find_all(['div', 'section', 'span', 'nav', 'footer']):
-                if any(cls in (element.get('class', []) or []) for cls in wiki_elements):
-                    element.decompose()
+            for element_to_remove in content.find_all(['div', 'section', 'span', 'nav', 'footer']): # Added span, nav, footer
+                if any(cls in (element_to_remove.get('class', []) or []) for cls in wiki_elements_to_remove):
+                    element_to_remove.decompose()
             text = content.get_text(separator=' ')
         else:
             text = soup.get_text(separator=' ')
-        # text = soup.get_text(separator=' ') # この行は重複している可能性
         text = re.sub(r'\s+', ' ', text).strip()
         logging.info(f"Successfully fetched and parsed URL (for KWIC search): {url}")
         return text
     except (URLError, HTTPError) as e_url:
         logging.error(f"URL Error fetching (KWIC search) {url}: {e_url.reason}")
-        raise ValueError(f"Could not access the provided URL. Please check the URL. Reason: {e_url.reason}")
+        raise ValueError(f"Could not access the URL. Reason: {e_url.reason}")
     except TimeoutError:
          logging.error(f"Timeout fetching (KWIC search) {url} after 15 seconds.")
-         raise ValueError(f"URL fetching timed out. The page took too long to respond.")
-    except ValueError as e_val:
+         raise ValueError("URL fetching timed out.")
+    except ValueError as e_val: # Specific ValueError from above
           logging.error(f"Value Error processing (KWIC search) {url}: {e_val}")
           raise
     except Exception as e_gen:
-        logging.error(f"An unexpected error occurred in get_text_from_url_for_kwic for {url}: {e_gen}\n{traceback.format_exc()}")
-        raise ValueError(f"An unexpected error occurred while fetching or processing the URL.")
+        logging.error(f"An unexpected error in get_text_from_url_for_kwic for {url}: {e_gen}\n{traceback.format_exc()}")
+        raise ValueError("An unexpected error occurred while fetching or processing the URL.")
 
 def clean_text_for_kwic(text):
-    text = re.sub(r'Jump to.*?content', '', text)
-    text = re.sub(r'From Wikipedia.*?encyclopedia', '', text)
-    text = re.sub(r'Categories\s*:.*', '', text)
-    text = re.sub(r'Hidden categories\s*:.*', '', text)
-    text = re.sub(r'\[\d+\]', '', text)
-    text = re.sub(r'Edit.*?section', '', text)
+    text = re.sub(r'Jump to.*?content', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'From Wikipedia.*?encyclopedia', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Categories\s*:.*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Hidden categories\s*:.*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\[\d+\]', '', text)  # citations like [1], [23]
+    text = re.sub(r'\[edit\]', '', text, flags=re.IGNORECASE) # Specific [edit] links
+    text = re.sub(r'Edit.*?section', '', text, flags=re.IGNORECASE)
     text = re.sub(r'oldid=\d+', '', text)
-    text = re.sub(r'\s*\(\s*disambiguation\s*\)\s*', '', text)
-    text = re.sub(r'CS1.*?sources.*$', '', text, flags=re.MULTILINE)
-    text = re.sub(r'Articles.*?containing.*$', '', text, flags=re.MULTILINE)
-    text = re.sub(r'Use mdy dates.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'\s*\(\s*disambiguation\s*\)\s*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'CS1.*?maintenance.*?\n', '', text, flags=re.MULTILINE | re.IGNORECASE)
+    text = re.sub(r'Articles.*?containing.*?\n', '', text, flags=re.MULTILINE | re.IGNORECASE)
+    text = re.sub(r'Use mdy dates.*?\n', '', text, flags=re.MULTILINE | re.IGNORECASE)
+    text = re.sub(r'Short description.*?\n', '', text, flags=re.MULTILINE | re.IGNORECASE)
     text = re.sub(r'Category:.*?(?=\n|$)', '', text)
+    text = re.sub(r'Coordinates:.*?(?=\n|$)', '', text) # Coordinates
+    # Further specific cleanup if needed
+    text = re.sub(r'Retrieved from.*?(?=\n|$)',"",text, flags=re.IGNORECASE)
+    text = re.sub(r'Navigation menu', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Personal tools', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Not logged in', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'TalkContributionsCreate accountLog in', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'NamespacesArticleTalk', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'ViewsReadEditView history', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Search Wikipedia', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Main pageContentsCurrent eventsRandom articleAbout WikipediaContact usDonate', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'HelpLearn to editCommunity portalRecent changesUpload file', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'ToolsWhat links hereRelated changesSpecial pagesPermanent linkPage informationCite this pageWikidata item', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Print/exportDownload as PDFPrintable version', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'In other projectsWikimedia Commons', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Languages‪Deutsch‬Español한국어ItalianoРусскийTiếng ViệtПравить ссылки', '', text, flags=re.IGNORECASE) # Example for other languages links
+    text = re.sub(r'Privacy policyAbout WikipediaDisclaimersContact WikipediaCode of ConductDevelopersStatisticsCookie statementMobile view', '', text, flags=re.IGNORECASE)
+    # Final cleanup of multiple spaces
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
 def remove_punctuation_from_token(token: str) -> str:
     return ''.join(char for char in token if char not in PUNCTUATION_SET)
 
+# preprocess_tokens_for_search はKWIC検索のトークン検索クエリの前処理にも使われる
 def preprocess_tokens_for_search(tokens_list: list[str]) -> list[str]:
     processed_tokens = [remove_punctuation_from_token(token) for token in tokens_list]
-    return [token for token in processed_tokens if token]
+    return [token for token in processed_tokens if token] # 空になったトークンを除去
 
-# === Authorship Attribution Helpers (NLTKベースのものはそのまま流用) ===
+# === Authorship Attribution Helpers ===
 def fetch_wikipedia_text_for_authorship(url: str) -> str:
-    # (この関数は元のコードのままとします。エラーハンドリング等も含む)
     logging.info(f"Fetching Wikipedia text for authorship from URL: {url}")
     try:
         req = urllib.request.Request(
@@ -220,16 +251,16 @@ def fetch_wikipedia_text_for_authorship(url: str) -> str:
             content_type = response.getheader('Content-Type')
             if not (content_type and 'text/html' in content_type.lower()):
                  logging.warning(f"URL (authorship) is not an HTML page: {url} (Content-Type: {content_type})")
-                 raise ValueError(f"The provided URL does not appear to be an HTML page.")
-    except (URLError, HTTPError) as e_url_auth: # Renamed variable
+                 raise ValueError("The provided URL does not appear to be an HTML page.")
+    except (URLError, HTTPError) as e_url_auth:
         logging.error(f"URL Error fetching (authorship) {url}: {e_url_auth.reason}")
         raise ValueError(f"Could not access the URL for authorship. Reason: {e_url_auth.reason}")
     except TimeoutError:
         logging.error(f"Timeout fetching (authorship) {url}")
         raise ValueError("URL fetching for authorship timed out.")
-    except Exception as err_fetch_auth: # Renamed variable
+    except Exception as err_fetch_auth:
         logging.error(f"Error fetching URL (authorship) {url}: {err_fetch_auth}\n{traceback.format_exc()}")
-        raise ValueError(f"An unexpected error occurred while fetching URL for authorship.")
+        raise ValueError("An unexpected error occurred while fetching URL for authorship.")
     
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
@@ -240,30 +271,38 @@ def fetch_wikipedia_text_for_authorship(url: str) -> str:
     if content:
         for section in content.find_all(['div', 'section'], class_=['toc', 'reference', 'reflist', 'navbox', 'metadata', 'catlinks']):
             section.decompose()
-        for element in content.find_all(['span', 'div'], class_=['mw-editsection', 'reference', 'reflist']):
+        for element in content.find_all(['span', 'div'], class_=['mw-editsection', 'reference', 'reflist']): # Consider removing more specific classes
             element.decompose()
         text = content.get_text(separator=' ')
     else:
-        text = soup.get_text(separator=' ')
-    text = re.sub(r'\[\d+\]', '', text)
-    text = re.sub(r'Edit.*?section', '', text)
-    text = re.sub(r'Jump to.*?content', '', text)
-    text = re.sub(r'From Wikipedia.*?encyclopedia', '', text)
-    text = re.sub(r'Categories\s*:.*', '', text)
+        text = soup.get_text(separator=' ') # Fallback
+    
+    # More aggressive cleaning for authorship
+    text = re.sub(r'\[\d+(?:,\s*\d+)*\]', '', text)  # Citations like [1], [2,3]
+    text = re.sub(r'\[.*?\]', '', text) # Any other content in square brackets
+    text = re.sub(r'\(listen\)', '', text, flags=re.IGNORECASE) # (listen)
+    text = re.sub(r'Edit.*?section', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Jump to.*?content', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'From Wikipedia.*?encyclopedia', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'Categories\s*:.*', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s+', ' ', text).strip()
     logging.info(f"Successfully fetched and parsed Wikipedia text for authorship from URL: {url}")
     return text
 
 def mixed_sentence_tokenize_for_authorship(text: str):
+    # NLTKの文分割に依存しないように修正 (正規表現ベース)
     return [s.strip() for s in _SENT_RE.split(text) if s.strip()]
 
 def tokenize_mixed_for_authorship(text: str):
-    # 著者分析ではNLTKのword_tokenizeを使い続ける (punktとwordsに依存)
+    # 著者分析ではNLTKのword_tokenizeを使用 (Build Commandでpunktがダウンロードされている前提)
     try:
         initial_tokens = word_tokenize(text)
+    except LookupError: # punkt が見つからない場合へのフォールバック
+        logging.warning("NLTK 'punkt' resource not found for authorship tokenization, falling back to simple split.")
+        initial_tokens = text.split()
     except Exception as e_tok_auth:
         logging.error(f"NLTK word_tokenize failed during authorship tokenization: {e_tok_auth}")
-        initial_tokens = text.split() # フォールバック
+        initial_tokens = text.split()
     punctuation_removed_tokens = preprocess_tokens_for_search(initial_tokens)
     lowercased_tokens = [token.lower() for token in punctuation_removed_tokens]
     return lowercased_tokens
@@ -278,7 +317,7 @@ def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len:
 
 @app.route('/')
 def home():
-    return "Hello, World! This is the home page."
+    return "Authorship Analysis API is running!"
 
 @app.route('/api/search', methods=['POST'])
 def kwic_search():
@@ -288,93 +327,54 @@ def kwic_search():
     search_type = data.get('type', 'token').strip().lower()
     sort_method = data.get('sort_method', 'sequential')
 
-    logging.info(f"Received KWIC search request. URL: {url}, Raw Query: '{query_input}', Type: {search_type}, Sort: {sort_method}")
+    logging.info(f"Received KWIC search. URL: {url}, Query: '{query_input}', Type: {search_type}, Sort: {sort_method}")
 
-    if not url: return jsonify({"error": "Please provide a Web Page URL."}), 400
+    if not url: return jsonify({"error": "URL is required."}), 400
     try:
         parsed_url = urlparse(url)
         if parsed_url.scheme not in ['http', 'https'] or not parsed_url.hostname:
-            return jsonify({"error": "Invalid URL. Only http/https from valid hostnames are allowed."}), 400
+            return jsonify({"error": "Invalid URL (must be http or https with a hostname)."}), 400
     except Exception: return jsonify({"error": "Invalid URL format."}), 400
-    if not query_input: return jsonify({"error": "Please provide a search query."}), 400
+    if not query_input: return jsonify({"error": "Search query is required."}), 400
 
-    text_from_page_for_kwic = ""
     try:
         raw_text = get_text_from_url_for_kwic(url)
-        text_from_page_for_kwic = clean_text_for_kwic(raw_text)
-        if not text_from_page_for_kwic:
-            return jsonify({"results": [], "error": "Could not extract text content from the URL."}), 200
+        text_content = clean_text_for_kwic(raw_text)
+        if not text_content:
+            return jsonify({"results": [], "error": "No text content extracted."}), 200
     except ValueError as e: return jsonify({"error": str(e)}), 400
     except Exception as e_proc:
-        logging.error(f"Unexpected server error during URL/text processing for KWIC: {e_proc}\n{traceback.format_exc()}")
-        return jsonify({"error": "An unexpected server error occurred during URL processing."}), 500
+        logging.error(f"KWIC URL processing error: {e_proc}\n{traceback.format_exc()}")
+        return jsonify({"error": "Server error during URL processing."}), 500
 
     results = []
     backend_context_window_size = 10
 
-    doc_for_kwic = None
-    if _SPACY_NLP:
-        try:
-            doc_for_kwic = _SPACY_NLP(text_from_page_for_kwic)
-        except Exception as e_spa_proc:
-            logging.error(f"spaCy processing failed for KWIC text: {e_spa_proc}\n{traceback.format_exc()}")
-            return jsonify({"error": "Text processing failed on the server (spaCy)."}), 500
-    else:
-        return jsonify({"error": "NLP model (spaCy) is not available. Cannot process search."}), 500
-
-    # spaCyのDocオブジェクトから元のケースの単語リストを生成 (KWIC表示用)
-    words_from_page_original_case_spacy = [token.text for token in doc_for_kwic]
-    # 検索比較用に小文字化・句読点除去したリスト (spaCyのトークンに基づいて)
-    words_from_page_processed_lower_spacy = [
-        remove_punctuation_from_token(token.text).lower() 
-        for token in doc_for_kwic 
-        if remove_punctuation_from_token(token.text) # 空のトークンを除去
-    ]
-
+    if not _SPACY_NLP: # グローバル変数をチェック
+        return jsonify({"error": "NLP model (spaCy) is not available."}), 500
+    try:
+        doc_for_kwic = _SPACY_NLP(text_content)
+    except Exception as e_spa_proc:
+        logging.error(f"spaCy processing failed for KWIC: {e_spa_proc}\n{traceback.format_exc()}")
+        return jsonify({"error": "Text processing (spaCy) failed."}), 500
 
     if search_type == 'token':
         raw_target_tokens = query_input.split()
         target_tokens_processed_lower = [remove_punctuation_from_token(word).lower() for word in raw_target_tokens if remove_punctuation_from_token(word)]
-
-        if not target_tokens_processed_lower:
-            return jsonify({"error": "Query became empty after processing."}), 400
-        if not 1 <= len(target_tokens_processed_lower) <= 5:
-            return jsonify({"error": "For token search, please enter one to five words."}), 400
-
+        if not target_tokens_processed_lower or not (1 <= len(target_tokens_processed_lower) <= 5):
+            return jsonify({"error": "Token query must be 1-5 words after punctuation removal."}), 400
+        
         num_target_tokens = len(target_tokens_processed_lower)
-        temp_results_for_sorting = []
-        all_observed_following_words = []
-        
-        # マッチングは words_from_page_processed_lower_spacy で行う
-        # コンテキスト表示は words_from_page_original_case_spacy を使う
-        # words_from_page_processed_lower_spacy のインデックスが doc_for_kwic のトークンインデックスと
-        # 直接対応しない可能性があるため注意（句読点のみのトークンが除去されるため）
-        # より正確には、doc_for_kwic をループし、条件に合うトークンシーケンスを探す
-        
-        current_processed_idx = 0
-        for i in range(len(doc_for_kwic) - num_target_tokens + 1):
-            # doc_for_kwic から num_target_tokens 分のトークンを取得し、
-            # それらを句読点除去・小文字化して検索クエリと比較する
-            candidate_tokens_original = [doc_for_kwic[j] for j in range(i, i + num_target_tokens)]
-            candidate_tokens_processed_lower = [
-                remove_punctuation_from_token(tok.text).lower() 
-                for tok in candidate_tokens_original 
-                if remove_punctuation_from_token(tok.text) # 句読点のみのトークンは無視
-            ]
-            
-            # 処理済み候補トークン数が検索クエリのトークン数と一致するか確認
-            if len(candidate_tokens_processed_lower) == num_target_tokens and candidate_tokens_processed_lower == target_tokens_processed_lower:
-                # マッチした場合、コンテキストは doc_for_kwic から取得
-                # マッチした最初のトークンのインデックスは i
-                # マッチした最後のトークンの次のインデックスは i + num_target_tokens
+        all_observed_following_words = [] # ソート用
 
-                # 元のテキストでのコンテキストを構築
-                # ここでの i は doc_for_kwic のトークンインデックス
+        for i in range(len(doc_for_kwic) - num_target_tokens + 1):
+            candidate_doc_tokens = [doc_for_kwic[j] for j in range(i, i + num_target_tokens)]
+            candidate_processed_lower = [remove_punctuation_from_token(t.text).lower() for t in candidate_doc_tokens if remove_punctuation_from_token(t.text)]
+            
+            if len(candidate_processed_lower) == num_target_tokens and candidate_processed_lower == target_tokens_processed_lower:
                 start_context_idx = max(0, i - backend_context_window_size)
                 end_context_idx = min(len(doc_for_kwic), i + num_target_tokens + backend_context_window_size)
-                
-                context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
-                
+                context_words_list = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
                 matched_start_in_context = i - start_context_idx
                 matched_end_in_context = matched_start_in_context + num_target_tokens
                 
@@ -384,108 +384,80 @@ def kwic_search():
                     current_following_word = doc_for_kwic[following_token_idx_in_doc].text.lower()
                     all_observed_following_words.append(current_following_word)
 
-                temp_results_for_sorting.append({
-                    "context_words": context_doc_tokens,
+                results.append({
+                    "context_words": context_words_list,
                     "matched_start": matched_start_in_context,
                     "matched_end": matched_end_in_context,
-                    "original_text_index": i, # doc_for_kwic における開始トークンインデックス
+                    "original_text_index": i, 
                     "raw_following_word": current_following_word
                 })
-
-        if not temp_results_for_sorting:
-            logging.info(f"Token query '{query_input}' (Processed: '{' '.join(target_tokens_processed_lower)}') not found.")
-        else:
+        # ソートのために一度resultsを仮変数に移す（もしソートする場合）
+        if results and sort_method == 'token': # 'token'ソートはtoken検索の結果にのみ適用
+            temp_results_for_sorting = results
             overall_following_word_frequencies = Counter(all_observed_following_words)
             results_with_frequency_info = []
             for item in temp_results_for_sorting:
                 item['overall_following_word_frequency'] = overall_following_word_frequencies.get(item['raw_following_word'], 0)
                 results_with_frequency_info.append(item)
             results_with_frequency_info.sort(key=lambda x: (-x['overall_following_word_frequency'], x['original_text_index']))
-            results = results_with_frequency_info
+            results = results_with_frequency_info # ソート済み結果で上書き
 
     elif search_type == 'pos':
         target_pos_tag_query = query_input.strip().upper()
         if not target_pos_tag_query or " " in target_pos_tag_query:
-             return jsonify({"error": "For POS search, please enter a single valid tag."}), 400
-
+             return jsonify({"error": "For POS search, enter a single valid tag."}), 400
         for i, token in enumerate(doc_for_kwic):
-            if token.tag_ == target_pos_tag_query: # spaCyの token.tag_ (詳細な品詞タグ) を使用
+            if token.tag_ == target_pos_tag_query:
                 start_context_idx = max(0, i - backend_context_window_size)
                 end_context_idx = min(len(doc_for_kwic), i + 1 + backend_context_window_size)
-                
                 context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
-                
                 matched_start_in_context = i - start_context_idx
-                matched_end_in_context = matched_start_in_context + 1
-                
                 results.append({
                     "context_words": context_doc_tokens,
                     "matched_start": matched_start_in_context,
-                    "matched_end": matched_end_in_context
+                    "matched_end": matched_start_in_context + 1
                 })
 
     elif search_type == 'entity':
         target_entity_type_query = query_input.strip().upper()
         if not target_entity_type_query or " " in target_entity_type_query:
-            return jsonify({"error": "For Entity search, please enter a single valid entity type."}), 400
-
-        if doc_for_kwic:
-            for ent in doc_for_kwic.ents:
-                if ent.label_.upper() == target_entity_type_query:
-                    start_token_doc_idx = ent.start
-                    end_token_doc_idx = ent.end
-
-                    start_context_idx = max(0, start_token_doc_idx - backend_context_window_size)
-                    end_context_idx = min(len(doc_for_kwic), end_token_doc_idx + backend_context_window_size)
-
-                    context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
-                    
-                    matched_start_in_context = start_token_doc_idx - start_context_idx
-                    matched_end_in_context = matched_start_in_context + (end_token_doc_idx - start_token_doc_idx)
-                    
-                    results.append({
-                        "context_words": context_doc_tokens,
-                        "matched_start": matched_start_in_context,
-                        "matched_end": matched_end_in_context
-                    })
-        else:
-            logging.warning("spaCy NLP model was not available for entity search.")
-
+            return jsonify({"error": "For Entity search, enter a single valid entity type."}), 400
+        for ent in doc_for_kwic.ents:
+            if ent.label_.upper() == target_entity_type_query:
+                start_token_idx = ent.start
+                end_token_idx = ent.end
+                start_context_idx = max(0, start_token_idx - backend_context_window_size)
+                end_context_idx = min(len(doc_for_kwic), end_token_idx + backend_context_window_size)
+                context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
+                matched_start_in_context = start_token_idx - start_context_idx
+                results.append({
+                    "context_words": context_doc_tokens,
+                    "matched_start": matched_start_in_context,
+                    "matched_end": matched_start_in_context + (end_token_idx - start_token_idx)
+                })
 
     if not results:
-        logging.info(f"Query '{query_input}' (Type: {search_type}) not found in text from {url}")
-        return jsonify({
-            "results": [],
-            "error": f"The query '{query_input}' (Type: {search_type}) was not found."
-        }), 200
+        return jsonify({"results": [], "error": f"Query '{query_input}' (Type: {search_type}) not found."}), 200
 
-    sorted_results = results # デフォルトは出現順 (token検索の場合は既にソート済みの場合あり)
-    if sort_method == 'token' and search_type == 'token': # tokenソートはtoken検索の結果にのみ適用
-        pass # results は既にソートされている想定
-    elif sort_method == 'pos':
+    sorted_results = results # デフォルト
+    if sort_method == 'pos' and search_type != 'token': # POSソート (token検索以外の場合)
         pos_groups = {}
-        if _SPACY_NLP:
-            for result_item in results:
-                context = result_item['context_words']
-                match_end_idx_in_context = result_item['matched_end']
-                if match_end_idx_in_context < len(context):
-                    next_word_text = context[match_end_idx_in_context]
-                    next_word_doc = _SPACY_NLP(next_word_text) # 次の単語だけを処理
-                    if next_word_doc and len(next_word_doc) > 0:
-                        pos_tag = next_word_doc[0].tag_
-                        if pos_tag not in pos_groups:
-                            pos_groups[pos_tag] = []
-                        pos_groups[pos_tag].append(result_item)
-            if pos_groups:
-                temp_sorted_list = []
-                pos_freqs = sorted(pos_groups.items(), key=lambda item: len(item[1]), reverse=True)
-                for tag, group_items in pos_freqs:
-                    temp_sorted_list.extend(group_items)
-                sorted_results = temp_sorted_list
-        else:
-            logging.warning("spaCy model not available for POS sorting.")
-
-    logging.info(f"Found {len(results)} raw occurrences for query '{query_input}'. Returning {len(sorted_results)} after sorting by '{sort_method}'.")
+        for res_item in results:
+            context = res_item['context_words']
+            match_end = res_item['matched_end']
+            if match_end < len(context):
+                next_word = context[match_end]
+                next_word_doc = _SPACY_NLP(next_word)
+                if next_word_doc and len(next_word_doc) > 0:
+                    pos_tag = next_word_doc[0].tag_
+                    pos_groups.setdefault(pos_tag, []).append(res_item)
+        if pos_groups:
+            temp_list = []
+            for tag, group in sorted(pos_groups.items(), key=lambda x: len(x[1]), reverse=True):
+                temp_list.extend(group)
+            sorted_results = temp_list
+    
+    logging.info(f"KWIC search successful. Returning {len(sorted_results)} results.")
     return jsonify({"results": sorted_results})
 
 
@@ -505,35 +477,32 @@ def authorship_analysis():
         except ValueError:
             return jsonify({"error": f"Invalid URL format for Author {label}: {url_val}"}), 400
     try:
-        logging.info("Downloading Wikipedia pages for authorship...")
+        logging.info("Fetching Wikipedia pages for authorship...")
         text_a = fetch_wikipedia_text_for_authorship(url_a)
         text_b = fetch_wikipedia_text_for_authorship(url_b)
         if not text_a or not text_b:
             return jsonify({"error": "Failed to fetch content from one or both Wikipedia pages."}), 500
         
-        logging.info("Splitting into sentences & labelling for authorship...")
+        logging.info("Building sentence dataset for authorship...")
         sentences_a, labels_a = build_sentence_dataset_for_authorship(text_a, "AuthorA")
         sentences_b, labels_b = build_sentence_dataset_for_authorship(text_b, "AuthorB")
         
-        if not sentences_a or not sentences_b or len(sentences_a) < 2 or len(sentences_b) < 2:
+        min_samples_per_class = 2 # train_test_splitのstratifyに最低限必要なサンプル数
+        if not sentences_a or not sentences_b or len(sentences_a) < min_samples_per_class or len(sentences_b) < min_samples_per_class :
             return jsonify({"error": "Could not extract enough valid sentences (min 30 chars, min 2 per author) for analysis."}), 400
 
         all_sentences = sentences_a + sentences_b
         all_labels = labels_a + labels_b
         
-        if len(set(all_labels)) < 2:
-             return jsonify({"error": "Could not gather sentences from both sources to perform comparison."}), 400
-
-        unique_labels_counts = Counter(all_labels)
-        if any(c < 2 for c in unique_labels_counts.values()) or len(all_sentences) < 5 :
-            return jsonify({"error": "Not enough sentences from each author (min 2) or too few sentences overall (min 5) for reliable model training."}), 400
+        if len(all_sentences) < 5: # 全体で最低5サンプルは欲しい
+             return jsonify({"error": "Too few sentences overall (min 5) for reliable model training."}), 400
 
         X_train, X_test, y_train, y_test = train_test_split(
             all_sentences, all_labels, test_size=0.2, random_state=42, stratify=all_labels
         )
         logging.info(f"Authorship Training samples: {len(X_train)} — Test samples: {len(X_test)}")
 
-        if not X_train or not X_test:
+        if not X_train or not X_test: # 分割後空にならないか確認
             return jsonify({"error": "Failed to create training/testing sets. Likely insufficient data."}), 400
 
         vectorizer = TfidfVectorizer(
@@ -553,18 +522,21 @@ def authorship_analysis():
         feature_names = vectorizer.get_feature_names_out()
         for idx, author in enumerate(clf.classes_):
             log_probs = clf.feature_log_prob_[idx]
-            top_indices = log_probs.argsort()[-10:][::-1]
+            top_indices = log_probs.argsort()[-10:][::-1] # 上位10単語
             top_terms = [feature_names[i] for i in top_indices]
             distinctive_words[author] = top_terms
             
         preds = clf.predict(X_test_vec)
         acc = accuracy_score(y_test, preds)
-        report_target_names = sorted(list(clf.classes_))
+        report_target_names = sorted(list(clf.classes_)) # クラス名をソートして渡す
         report = sk_classification_report(y_test, preds, digits=3, zero_division=0, target_names=report_target_names)
         
         sample_predictions = []
-        num_samples = min(len(X_test), 5)
-        for sent, true_label, pred_label in zip(X_test[:num_samples], y_test[:num_samples], preds[:num_samples]):
+        num_samples_to_show = min(len(X_test), 5)
+        for i in range(num_samples_to_show):
+            sent = X_test[i]
+            true_label = y_test[i]
+            pred_label = preds[i]
             snippet = (sent[:100] + "…") if len(sent) > 100 else sent
             sample_predictions.append({
                 "sentence_snippet": snippet,
@@ -581,25 +553,27 @@ def authorship_analysis():
             "training_samples_count": len(X_train),
             "test_samples_count": len(X_test)
         })
-    except ValueError as ve:
-        logging.error(f"ValueError during authorship analysis: {ve}\n{traceback.format_exc()}")
-        return jsonify({"error": str(ve)}), 400
-    except Exception as e_auth:
-        logging.error(f"An unexpected error occurred during authorship analysis: {e_auth}\n{traceback.format_exc()}")
+    except ValueError as ve_auth: # Renamed variable
+        logging.error(f"ValueError during authorship analysis: {ve_auth}\n{traceback.format_exc()}")
+        return jsonify({"error": str(ve_auth)}), 400
+    except Exception as e_auth_unexpected: # Renamed variable
+        logging.error(f"An unexpected error during authorship analysis: {e_auth_unexpected}\n{traceback.format_exc()}")
         return jsonify({"error": "An unexpected server error occurred during authorship analysis."}), 500
 
 if __name__ == "__main__":
-    # ローカル開発時のみ実行される
-    print("--- Flask development server starting (app.py __main__) ---")
-    # initialize_nlp_resources() は既にグローバルスコープで呼び出されている
+    # このブロックはRender環境では通常実行されない (gunicornが直接 `app` オブジェクトをロードするため)
+    # ローカルでのテスト実行用
+    print("--- Flask development server starting via __main__ (for local testing) ---")
+    # initialize_nlp_resources() は既にグローバルスコープで呼び出されているはず
     
-    if not _SPACY_NLP:
-        print("CRITICAL: spaCy model could not be loaded in __main__. Exiting.")
-        sys.exit(1)
+    if not _SPACY_NLP: # 再確認
+        print("CRITICAL (from __main__): spaCy model could not be loaded. The application might not work correctly if run directly.")
+        # sys.exit(1) # ローカルテストなので、必ずしも終了させなくても良いかもしれない
     
-    # fugaishiタガーの確認 (initialize_nlp_resourcesの外なのでここで良い)
     if not _TAGGER:
-        print("Warning: Fugashi Tagger failed to initialize in __main__. Japanese NLP features for authorship attribution will be limited.")
+        print("Warning (from __main__): Fugashi Tagger failed to initialize. Japanese NLP features for authorship attribution will be limited.")
     
-    print("Starting Flask app server via app.run()...")
-    app.run(debug=True, port=8080, host='0.0.0.0') # ローカルテスト用にポート8080を使用
+    print("Starting Flask app server with app.run()...")
+    # RenderはPORT環境変数を設定するので、ローカル用にデフォルトポートを指定
+    local_port = int(os.environ.get("PORT", 8080))
+    app.run(debug=True, port=local_port, host='0.0.0.0')
