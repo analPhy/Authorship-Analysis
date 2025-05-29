@@ -55,33 +55,6 @@ def initialize_nlp_resources():
     else:
         print(f"--- [APP STARTUP PRE-CHECK] NLTK data directory '{_NLTK_DATA_DIR}' exists. ---")
 
-    if _NLTK_DATA_DIR not in nltk.data.path:
-        nltk.data.path.insert(0, _NLTK_DATA_DIR)
-    print(f"--- [APP STARTUP PRE-CHECK] NLTK data path configured to: {nltk.data.path} ---")
-
-    # 著者分析で最低限必要なNLTKリソースの確認
-    required_nltk_for_authorship = {
-        'punkt': 'tokenizers/punkt', # word_tokenizeが依存
-        'words': 'corpora/words'    # stopwordsisoが依存
-    }
-    all_nltk_ok_for_authorship = True
-    print("--- [APP STARTUP] Checking NLTK resources required for Authorship Analysis... ---")
-    for res_id, res_check_path in required_nltk_for_authorship.items():
-        try:
-            # nltk.data.find は nltk.data.path 内の各パスに res_check_path を結合して探す
-            nltk.data.find(res_check_path)
-            print(f"--- [APP STARTUP]   [FOUND] NLTK resource for Authorship: {res_id} (Path: {res_check_path}) ---")
-        except LookupError:
-            print(f"--- [APP STARTUP]   [CRITICAL NOT FOUND] NLTK resource for Authorship: {res_id} (Path: {res_check_path}) ---")
-            all_nltk_ok_for_authorship = False
-    
-    if not all_nltk_ok_for_authorship:
-        print("--- [APP STARTUP] CRITICAL ERROR: Not all required NLTK resources for authorship were found. ---")
-        print("--- [APP STARTUP] This indicates an issue with 'download_nltk_for_authorship.py' in Build Command or NLTK_DATA path. ---")
-        sys.exit(1)
-    else:
-        print("--- [APP STARTUP] All required NLTK resources for authorship are available. ---")
-
 # --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
