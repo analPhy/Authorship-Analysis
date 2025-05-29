@@ -8,7 +8,7 @@ import re
 import urllib.request
 from urllib.error import URLError, HTTPError
 import nltk
-from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.tokenize import word_tokenize
 # nltk.download('maxent_ne_chunker_tab') # This line should be removed or commented out
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
