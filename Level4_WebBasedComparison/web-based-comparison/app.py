@@ -18,56 +18,63 @@ import traceback
 import logging
 import sys
 import string
+import subprocess
 
+
+# app.py の冒頭 (import の後など)
 import nltk
+import sys
+import os
 
-# ダウンロードが必要なNLTKリソースのリスト
-# (キー: nltk.data.find で使用するパス, 値: nltk.download で使用するID)
-required_nltk_resources = {
-    "taggers/averaged_perceptron_tagger": "averaged_perceptron_tagger",
-    "tokenizers/punkt": "punkt",
-    "corpora/words": "words",
-    "chunkers/maxent_ne_chunker": "maxent_ne_chunker",
-    "chunkers/maxent_ne_chunker_tab": "maxent_ne_chunker_tab", # ログにあったもの
-    # エラーで 'averaged_perceptron_tagger_eng' を要求された場合は以下を試すか、上記を置き換える
-    # "taggers/averaged_perceptron_tagger_eng": "averaged_perceptron_tagger_eng",
+# Render環境でNLTK_DATA環境変数が設定されていることを期待する
+# nltk.data.path に /opt/render/nltk_data が含まれているか確認
+nltk_data_dir_runtime = os.environ.get('NLTK_DATA', '/opt/render/nltk_data')
+if nltk_data_dir_runtime not in nltk.data.path:
+    nltk.data.path.insert(0, nltk_data_dir_runtime)
+
+print(f"--- [APP STARTUP] NLTK data path: {nltk.data.path} ---")
+
+# Build Command の download_nltk.py と完全に同じリストにする
+required_nltk_resources_app = {
+    'averaged_perceptron_tagger_eng': 'taggers/averaged_perceptron_tagger_eng',
+    'punkt': 'tokenizers/punkt',
+    'words': 'corpora/words',
+    'maxent_ne_chunker': 'chunkers/maxent_ne_chunker',
+    'maxent_ne_chunker_tab': 'chunkers/maxent_ne_chunker_tab'
+    # 'averaged_perceptron_tagger': 'taggers/averaged_perceptron_tagger' # 必要なら
 }
+all_resources_available_app = True
 
-all_resources_found = True
-for resource_path, download_id in required_nltk_resources.items():
+print("--- [APP STARTUP] Checking NLTK resources availability... ---")
+for res_id, res_check_path in required_nltk_resources_app.items():
     try:
-        nltk.data.find(resource_path)
-        print(f"NLTK resource '{download_id}' found at '{resource_path}'.")
+        nltk.data.find(res_check_path) # ここはres_check_path (辞書のキーではなく値)
+        print(f"--- [APP STARTUP]   [FOUND] NLTK resource for {res_id} (Path: {res_check_path}) ---")
     except LookupError:
-        print(f"NLTK resource '{download_id}' for path '{resource_path}' not found.")
-        # Build Command でダウンロードしているはずなので、ここに来る場合は問題。
-        # 必要に応じて、ここで再度ダウンロードを試みるか、エラーとして扱う。
-        # 例: アプリケーション起動時にどうしてもダウンロードが必要な場合
-        # print(f"Attempting to download '{download_id}'...")
-        # try:
-        #     nltk.download(download_id, quiet=True)
-        #     nltk.data.find(resource_path) # 再度確認
-        #     print(f"Successfully downloaded '{download_id}'.")
-        # except Exception as e:
-        #     print(f"Failed to download '{download_id}' during app startup: {e}")
-        #     all_resources_found = False
-        all_resources_found = False # Build Commandでダウンロードする前提なら、ここに来たらエラー
+        print(f"--- [APP STARTUP]   [CRITICAL NOT FOUND] NLTK resource for {res_id} (Path: {res_check_path}) ---")
+        all_resources_available_app = False
 
-if not all_resources_found:
-    print("CRITICAL: Not all NLTK resources were found. Please check the build process.")
-    # アプリケーションを正常に動作させられない場合はここで終了させることも検討
-    # sys.exit(1)
+if not all_resources_available_app:
+    print("--- [APP STARTUP] CRITICAL ERROR: Not all required NLTK resources were found during app startup. ---")
+    print("--- [APP STARTUP] This indicates an issue with the build process or NLTK_DATA path. ---")
+    print("--- [APP STARTUP] Exiting application. ---")
+    sys.exit(1) # リソースが不足していればアプリケーションを起動させない
+else:
+    print("--- [APP STARTUP] All required NLTK resources are available for the application. ---")
 
-# --- NEW: spaCy for more accurate NER (minimal addition) ---
+# spaCyモデルのロード確認も同様に
 try:
     import spacy
     _SPACY_NLP = spacy.load("en_core_web_sm")
-    logging.info("spaCy 'en_core_web_sm' model loaded for NER.")
-except Exception as e_spa:
-    _SPACY_NLP = None
-    logging.warning(f"spaCy not available or model load failed: {e_spa}. Falling back to NLTK NER.")
+    print("--- [APP STARTUP] spaCy model 'en_core_web_sm' loaded successfully. ---")
+except OSError as e:
+    print(f"--- [APP STARTUP] CRITICAL ERROR: spaCy model 'en_core_web_sm' not found or failed to load: {e} ---")
+    sys.exit(1)
 
-    import subprocess
+# --- ここからFlaskアプリケーションの定義など ---
+print("--- [APP STARTUP] Initializing Flask application... ---")
+
+
 
 model_name = "en_core_web_sm" # 使用したいモデル名
 
