@@ -27,14 +27,16 @@ import sys
 import os
 
 # 環境変数 NLTK_DATA からパスを取得。なければデフォルトで固定パスを使用。
+# この固定パスは download_nltk.py で指定したパスと完全に一致させる。
 expected_nltk_data_dir = os.environ.get('NLTK_DATA', '/opt/render/project/src/nltk_data_on_render')
 print(f"--- [APP STARTUP] Expected NLTK_DATA directory: {expected_nltk_data_dir} (from ENV or default) ---")
 
-# nltk.data.path にこの期待されるパスが含まれているか確認し、なければ先頭に追加
 if not os.path.isdir(expected_nltk_data_dir):
-     print(f"--- [APP STARTUP] CRITICAL ERROR: NLTK data directory '{expected_nltk_data_dir}' does NOT exist. ---")
+     print(f"--- [APP STARTUP] CRITICAL ERROR: NLTK data directory '{expected_nltk_data_dir}' does NOT exist. Check NLTK_DATA env var and build script path. ---")
      sys.exit(1)
 
+# nltk.data.path にこの期待されるパスが含まれているか確認し、なければ先頭に追加
+# （環境変数 NLTK_DATA が設定されていれば、NLTKは通常これを自動的に検索パスの先頭に加えるが、念のため）
 if expected_nltk_data_dir not in nltk.data.path:
     nltk.data.path.insert(0, expected_nltk_data_dir)
 
