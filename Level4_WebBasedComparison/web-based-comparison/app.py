@@ -8,33 +8,33 @@ import re
 import urllib.request
 from urllib.error import URLError, HTTPError
 import nltk
-# word_tokenize は使わず、sent_tokenize (高レベルAPI) の代わりに PunktSentenceTokenizer を直接使う
-from nltk.tokenize.punkt import PunktSentenceTokenizer # 明示的に使用
-from nltk.tokenize import TreebankWordTokenizer      # 明示的に使用
+# word_tokenize は直接使わず、TreebankWordTokenizer を使用
+from nltk.tokenize import TreebankWordTokenizer
+# sent_tokenize も直接使わず、ロード済みのPunktSentenceTokenizerを使用
+# from nltk.tokenize.punkt import PunktSentenceTokenizer # nltk.data.load() を使うので直接インポートは不要な場合も
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import traceback
 import logging
 import sys
-import string # For punctuation set
+import string
 
-# --- Authorship Attribution Imports ---
+# --- Authorship Attribution Imports --- (変更なし)
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split  # ← ★この行を確認・追加★
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import classification_report as sk_classification_report, accuracy_score
-
-# --- Multilingual Support Libraries ---
+# ... (以下同様)
 from langdetect import detect as lang_detect
 import fugashi
 from stopwordsiso import stopwords
 
-# --- Punctuation Handling ---
-PUNCTUATION_SET = set(string.punctuation + '。、「」』『【】・（）　')
 
+
+# --- Punctuation Handling --- (変更なし)
+PUNCTUATION_SET = set(string.punctuation + '。、「」』『【】・（）　')
 def remove_punctuation_from_token(token: str) -> str:
     return ''.join(char for char in token if char not in PUNCTUATION_SET)
-
 def preprocess_tokens(tokens_list: list[str]) -> list[str]:
     if not isinstance(tokens_list, list):
         logging.warning(f"preprocess_tokens received non-list input: {type(tokens_list)}")
@@ -42,21 +42,17 @@ def preprocess_tokens(tokens_list: list[str]) -> list[str]:
     processed_tokens = [remove_punctuation_from_token(str(token)) for token in tokens_list]
     return [token for token in processed_tokens if token]
 
-# --- Logging Setup ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
-    stream=sys.stdout
-)
+# --- Logging Setup --- (変更なし)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s', stream=sys.stdout)
 
 # --- NLTK Resource Check ---
 REQUIRED_NLTK_RESOURCES = {
-    "punkt": "tokenizers/punkt", # For PunktSentenceTokenizer (english.pickle)
+    "punkt": "tokenizers/punkt",  # For PunktSentenceTokenizer (english.pickle)
     "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger",
     "maxent_ne_chunker": "chunkers/maxent_ne_chunker",
     "words": "corpora/words"
 }
-
+# ... (NLTKリソースチェックのループは変更なし、前回提供の通り) ...
 logging.info("Checking NLTK resources...")
 for download_key, path_to_find in REQUIRED_NLTK_RESOURCES.items():
     try:
@@ -78,36 +74,33 @@ for download_key, path_to_find in REQUIRED_NLTK_RESOURCES.items():
             logging.error(f"Error during NLTK resource '{download_key}' download/verification: {e_download}")
             logging.error(f"Manual download may be needed: python -m nltk.downloader {download_key}")
 
+
 # --- Global NLTK Tokenizer Instances ---
 _ENG_SENT_TOKENIZER = None
-_TB_WORD_TOKENIZER = TreebankWordTokenizer() # Initialize once
+_TB_WORD_TOKENIZER = TreebankWordTokenizer() 
 try:
-    # Load the standard English Punkt sentence tokenizer model
+    # Load the standard English Punkt sentence tokenizer model from the 'punkt' resource
     _ENG_SENT_TOKENIZER = nltk.data.load("tokenizers/punkt/english.pickle")
-    logging.info("Standard English PunktSentenceTokenizer loaded successfully.")
+    logging.info("Standard English PunktSentenceTokenizer loaded successfully from pickle.")
 except LookupError: # pragma: no cover
     logging.error("CRITICAL: NLTK 'punkt/english.pickle' not found. Sentence tokenization will fail.")
 except Exception as e: # pragma: no cover
     logging.error(f"Error loading English PunktSentenceTokenizer: {e}")
 
 
-# --- Global Settings for Authorship Attribution ---
-_TAGGER = None # For Fugashi
-try:
-    _TAGGER = fugashi.Tagger()
-    logging.info("fugashi Tagger initialized successfully.")
-except Exception as e:
-    logging.error(f"Failed to initialize fugashi Tagger: {e}. Japanese tokenization for authorship will not work.")
-
+# --- Global Settings for Authorship Attribution --- (変更なし)
+# ... (_TAGGER, _EN_SW, _JA_SW, _ALL_SW, _SENT_RE) ...
+_TAGGER = None
+try: _TAGGER = fugashi.Tagger(); logging.info("fugashi Tagger initialized.")
+except Exception as e: logging.error(f"Fugashi Tagger init failed: {e}")
 _EN_SW, _JA_SW = set(), set()
-try:
-    _EN_SW = stopwords("en"); _JA_SW = stopwords("ja")
-    logging.info("English and Japanese stopwords (for authorship) loaded.")
-except Exception as e: logging.error(f"Failed to load stopwords (for authorship): {e}")
+try: _EN_SW = stopwords("en"); _JA_SW = stopwords("ja"); logging.info("Stopwords loaded.")
+except Exception as e: logging.error(f"Stopwords load failed: {e}")
 _ALL_SW = sorted(list(_EN_SW.union(_JA_SW)))
-_SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+") # User's sentence splitter
+_SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+")
 
-# --- Flask App Setup ---
+# --- Flask App Setup --- (変更なし)
+# ... (CORS設定含む) ...
 app = Flask(__name__)
 FRONTEND_GITHUB_PAGES_ORIGIN = "https://analphy.github.io"
 FRONTEND_DEV_ORIGIN_3000 = "http://localhost:3000"
@@ -115,9 +108,10 @@ FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080"
 allowed_origins_list = [FRONTEND_GITHUB_PAGES_ORIGIN, FRONTEND_DEV_ORIGIN_3000, FRONTEND_DEV_ORIGIN_8080]
 CORS(app, resources={r"/api/*": {"origins": allowed_origins_list}})
 
-# === Consolidated Text processing function ===
+
+# === Consolidated Text processing function === (変更なし)
 def get_text_from_url(url: str, purpose: str = "generic text extraction") -> str:
-    # ... (This function was provided in the previous full code, keep as is) ...
+    # ... (前回提供の get_text_from_url 関数の実装) ...
     logging.info(f"Attempting to fetch URL (for {purpose}): {url}")
     try:
         req = urllib.request.Request(
@@ -161,76 +155,47 @@ def get_text_from_url(url: str, purpose: str = "generic text extraction") -> str
     except Exception as e:
         logging.error(f"Unexpected error in get_text_from_url ({purpose}) for {url}: {e}\n{traceback.format_exc()}")
         raise ValueError("Unexpected error fetching/processing URL.")
-    
-def fetch_wikipedia_text_for_authorship(url: str) -> str:
-    logging.info(f"Fetching Wikipedia text for authorship from URL: {url}")
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={'User-Agent': 'Mozilla/5.0 (Python-Flask-Authorship-App/1.0)'}
-        )
-        with urllib.request.urlopen(req, timeout=20) as response:
-            html = response.read()
-            content_type = response.getheader('Content-Type')
-            if not (content_type and 'text/html' in content_type.lower()):
-                 logging.warning(f"URL (authorship) is not an HTML page: {url} (Content-Type: {content_type})")
-                 raise ValueError(f"The provided URL does not appear to be an HTML page.")
-    except (URLError, HTTPError) as e:
-        logging.error(f"URL Error fetching (authorship) {url}: {e.reason}")
-        raise ValueError(f"Could not access the URL for authorship. Reason: {e.reason}")
-    except TimeoutError:
-        logging.error(f"Timeout fetching (authorship) {url}")
-        raise ValueError("URL fetching for authorship timed out.")
-    except Exception as err:
-        logging.error(f"Error fetching URL (authorship) {url}: {err}\n{traceback.format_exc()}")
-        raise ValueError(f"An unexpected error occurred while fetching URL for authorship.")
 
-    soup = BeautifulSoup(html, "html.parser")
-    # 著者分析用に除去するタグリスト (ユーザー提供のコードに基づく)
-    tags_to_remove = ["script", "style", "sup", "table", "nav", "footer", "aside", "header", 
-                      "form", "figure", "figcaption", "link", "meta", "input", "button", 
-                      "img", "audio", "video", "iframe", "object", "embed", "svg", "canvas", "noscript"]
-    for tag_name in tags_to_remove:
-        for tag in soup.find_all(tag_name):
-            tag.decompose()
-    text = soup.get_text(" ")
-    text = re.sub(r"\[\d+\]", "", text) # Wikipediaの参照番号 [1] などを除去
-    text = re.sub(r"\s+", " ", text).strip() # 連続する空白を一つにし、前後の空白を除去
-    logging.info(f"Successfully fetched and parsed Wikipedia text for authorship from URL: {url}")
-    return text
 
-# --- Tokenizer for Authorship (uses explicit sentence and word tokenizers) ---
+# --- Tokenizer for Authorship (Uses pre-loaded _ENG_SENT_TOKENIZER and _TB_WORD_TOKENIZER) ---
 def tokenize_mixed_for_authorship(text: str) -> list[str]:
     initial_tokens = []
-    global _ENG_SENT_TOKENIZER, _TB_WORD_TOKENIZER # Use pre-loaded tokenizers
+    # Use global tokenizers pre-loaded at startup
+    global _ENG_SENT_TOKENIZER, _TB_WORD_TOKENIZER, _TAGGER 
 
     if not _TAGGER: # Fugashi not available
-        logging.warning("Fugashi Tagger not available, using NLTK standard tokenization for authorship.")
+        logging.warning("Fugashi Tagger not available, using NLTK standard tokenization for authorship (English assumed).")
         try: 
             if _ENG_SENT_TOKENIZER:
                 sentences_auth = _ENG_SENT_TOKENIZER.tokenize(text)
                 for sentence in sentences_auth: initial_tokens.extend(_TB_WORD_TOKENIZER.tokenize(sentence))
-            else: logging.error("English sentence tokenizer not loaded for authorship."); initial_tokens = text.split()
-        except Exception as e_tok: logging.error(f"NLTK tokenization fallback in authorship: {e_tok}"); initial_tokens = text.split()
+            else: 
+                logging.error("English sentence tokenizer not loaded for authorship. Falling back to simple split.")
+                initial_tokens = text.split() 
+        except Exception as e_tok:
+            logging.error(f"NLTK tokenization fallback failed in authorship: {e_tok}\n{traceback.format_exc()}"); initial_tokens = text.split()
     else: # Fugashi available
         try: lang = lang_detect(text)
-        except Exception: logging.warning(f"Langdetect failed for authorship: '{text[:100]}'. Defaulting to English."); lang = "en"
+        except Exception: logging.warning(f"Langdetect failed for authorship sample: '{text[:100]}'. Defaulting to English."); lang = "en"
         
-        if lang == "ja": initial_tokens = [tok.surface for tok in _TAGGER(text)]
-        else: 
+        if lang == "ja":
+            initial_tokens = [tok.surface for tok in _TAGGER(text)]
+        else: # Default to NLTK's PunktSentenceTokenizer + TreebankWordTokenizer for other languages
             try: 
                 if _ENG_SENT_TOKENIZER:
                     sentences_auth = _ENG_SENT_TOKENIZER.tokenize(text)
                     for sentence in sentences_auth: initial_tokens.extend(_TB_WORD_TOKENIZER.tokenize(sentence))
-                else: logging.error("English sentence tokenizer not loaded for non-JA authorship."); initial_tokens = text.split()
-            except Exception as e_tok_en: logging.error(f"NLTK tokenization for non-JA in authorship: {e_tok_en}"); initial_tokens = text.split()
+                else:
+                    logging.error("English sentence tokenizer not loaded for non-JA authorship. Falling back to simple split.")
+                    initial_tokens = text.split()
+            except Exception as e_tok_en: logging.error(f"NLTK tokenization for non-JA in authorship: {e_tok_en}\n{traceback.format_exc()}"); initial_tokens = text.split()
     
     punctuation_removed_tokens = preprocess_tokens(initial_tokens)
     lowercased_tokens = [token.lower() for token in punctuation_removed_tokens]
     return lowercased_tokens
 
-# --- Sentence processing for Authorship ---
-def mixed_sentence_tokenize_for_authorship(text: str): # User's sentence splitter
+# --- Sentence processing for Authorship (User's existing function) ---
+def mixed_sentence_tokenize_for_authorship(text: str):
     return [s.strip() for s in _SENT_RE.split(text) if s.strip()]
 
 def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
@@ -263,13 +228,14 @@ def kwic_search():
         if not text_content: return jsonify({"results": [], "error": "Could not extract text content."}), 200
         
         initial_tokens_from_page = []
-        if _ENG_SENT_TOKENIZER:
+        if _ENG_SENT_TOKENIZER: # Check if tokenizer loaded successfully
             sentences = _ENG_SENT_TOKENIZER.tokenize(text_content)
-            for sentence in sentences: initial_tokens_from_page.extend(_TB_WORD_TOKENIZER.tokenize(sentence))
+            for sentence in sentences: 
+                initial_tokens_from_page.extend(_TB_WORD_TOKENIZER.tokenize(sentence))
             logging.info(f"Tokenization for KWIC successful. Tokens: {len(initial_tokens_from_page)}")
-        else: # Should not happen if _ENG_SENT_TOKENIZER loaded at startup
-            logging.error("Core sentence tokenizer not available for KWIC. This is a critical startup error.")
-            return jsonify({"error": "Server-side tokenizer not initialized."}), 500
+        else:
+            logging.error("CRITICAL: English sentence tokenizer (_ENG_SENT_TOKENIZER) is not available for KWIC search!")
+            return jsonify({"error": "Server-side tokenizer initialization failed. Please contact support."}), 500
             
         words_from_page_processed = preprocess_tokens(initial_tokens_from_page)
         if not words_from_page_processed: return jsonify({"results": [], "error": "No searchable words after processing."}), 200
@@ -280,7 +246,7 @@ def kwic_search():
 
     results = []
     backend_context_window_size = 10
-    display_query_for_not_found = query_input
+    display_query_for_not_found = query_input 
 
     if search_type == 'token':
         raw_target_tokens = query_input.split()
@@ -369,7 +335,7 @@ def kwic_search():
     # --- End of custom sorting logic ---
 
     if not results:
-        logging.info(f"Query '{query_input}' (Type: {search_type}, Display: '{display_query_for_not_found}') ultimately yielded no results.")
+        logging.info(f"Query '{query_input}' (Type: {search_type}, Display Query: '{display_query_for_not_found}') ultimately yielded no results.")
         return jsonify({"results": [], "error": f"The query '{display_query_for_not_found}' (Type: {search_type}) was not found."}), 200
     logging.info(f"Found and returning {len(results)} occurrences for query '{query_input}' (Type: {search_type}).")
     return jsonify({"results": results})
@@ -383,8 +349,9 @@ def authorship_analysis():
 
     if not url_a or not url_b: return jsonify({"error": "Please provide two Web Page URLs."}), 400
     
-    # Using user's Wikipedia-specific logic for authorship.
-    # To make this general, remove wikipedia.org check and use get_text_from_url.
+    # User's original logic was specific to Wikipedia for authorship.
+    # If general URLs are desired, this validation should be removed/changed
+    # and get_text_from_url should be used instead of fetch_wikipedia_text_for_authorship.
     for i, url_val in enumerate([url_a, url_b]):
         label = "A" if i == 0 else "B"
         try:
@@ -396,8 +363,10 @@ def authorship_analysis():
         except ValueError: return jsonify({"error": f"Invalid URL format for Source {label}: {url_val}"}), 400
 
     try:
-        text_a = fetch_wikipedia_text_for_authorship(url_a) # User's specific fetcher
-        text_b = fetch_wikipedia_text_for_authorship(url_b) # User's specific fetcher
+        # Using user's fetch_wikipedia_text_for_authorship for this endpoint as per their code structure
+        # For general URLs, replace with get_text_from_url
+        text_a = get_text_from_url(url_a, "Authorship Source A")
+        text_b = get_text_from_url(url_b, "Authorship Source B")
         if not text_a or not text_b: return jsonify({"error": "Failed to fetch content for authorship."}), 500
 
         sentences_a, labels_a = build_sentence_dataset_for_authorship(text_a, "AuthorA")
@@ -459,28 +428,22 @@ if __name__ == "__main__":
     print("Flask development server starting...")
     print("Verifying NLTK resources...")
     all_nltk_res_ok = True
-    # Ensure NLTK resources are checked before _ENG_SENT_TOKENIZER tries to load
+    # Check if resources were actually downloaded and are findable by NLTK
     for res_key, res_path_val in REQUIRED_NLTK_RESOURCES.items():
-        # This loop is just for logging, actual loading happens when NLTK functions are called
-        # or for _ENG_SENT_TOKENIZER, it's pre-loaded after this block.
         try: nltk.data.find(res_path_val) 
         except LookupError: # pragma: no cover
-            # The download logic earlier should handle this, this is a final check for the printout.
-            # The main download happens in the loop at the top of the script.
-            # This can be simplified if the initial loop is trusted.
-            print(f"Warning: NLTK resource '{res_key}' might not have been available initially. Ensure download succeeded.")
-            all_nltk_res_ok = False # Set to false if any are still not found by this point.
-    if all_nltk_res_ok and _ENG_SENT_TOKENIZER : # Also check if pre-loaded tokenizer is OK
-        print("All required NLTK resources (including pre-loaded tokenizer) appear available.")
-    elif not _ENG_SENT_TOKENIZER:
-        print("CRITICAL WARNING: Standard English sentence tokenizer (_ENG_SENT_TOKENIZER) failed to load at startup.")
+            print(f"Warning: NLTK resource '{res_key}' was not found initially or after download attempt. Functionality may be impaired.")
+            all_nltk_res_ok = False # Mark that at least one resource is problematic
+    
+    if _ENG_SENT_TOKENIZER is None and "punkt" in REQUIRED_NLTK_RESOURCES : # Check if specific pre-load failed
+        print("CRITICAL WARNING: Standard English sentence tokenizer (_ENG_SENT_TOKENIZER) failed to load at startup. Check 'punkt' NLTK resource.")
         all_nltk_res_ok = False
 
 
+    if all_nltk_res_ok: print("All required NLTK resources appear to be available and essential tokenizers loaded.")
+    else: print("WARNING: Some NLTK resources may be missing or failed to load. Application functionality might be impaired.")
+
     if not _TAGGER: print("Warning: Fugashi Tagger (Japanese) not initialized.")
     
-    if not all_nltk_res_ok:
-        print("WARNING: Some NLTK resources may be missing. Application functionality might be impaired.")
-
     print("Starting Flask app server...")
     app.run(debug=True, port=8080, host='0.0.0.0') # User's preferred port
