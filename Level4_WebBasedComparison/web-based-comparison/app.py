@@ -427,9 +427,30 @@ def kwic_search():
             "results": [],
             "error": f"The query '{query_input}' (Type: {search_type}) was not found in the text from the provided URL."
         }), 200
+
+    # Group results by the next few words after match
+    pattern_groups = {}
+    for result in results:
+        matched_end = result["matched_end"]
+        context_words = result["context_words"]
+        if matched_end < len(context_words):
+            # Take up to 3 words after the match to form a pattern
+            next_words = context_words[matched_end:min(matched_end + 3, len(context_words))]
+            pattern = " ".join(word.lower() for word in next_words)
+            if pattern not in pattern_groups:
+                pattern_groups[pattern] = []
+            pattern_groups[pattern].append(result)
+
+    # Sort patterns by frequency (number of occurrences)
+    sorted_patterns = sorted(pattern_groups.items(), key=lambda x: len(x[1]), reverse=True)
+
+    # Flatten the grouped results while maintaining group order
+    sorted_results = []
+    for pattern, group in sorted_patterns:
+        sorted_results.extend(group)
         
     logging.info(f"Found {len(results)} occurrences for query '{query_input}' (Type: {search_type}) in text from {url}")
-    return jsonify({"results": results})
+    return jsonify({"results": sorted_results})
 
 @app.route('/api/authorship', methods=['POST'])
 def authorship_analysis(): # No changes to this function
