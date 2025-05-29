@@ -19,6 +19,8 @@ import traceback
 import logging
 import sys
 
+import string
+
 # --- Authorship Attribution Imports ---
 # EN: Import scikit-learn modules for authorship analysis
 # JP: 著者識別分析用のscikit-learnモジュールをインポート
@@ -33,6 +35,8 @@ from sklearn.metrics import classification_report as sk_classification_report, a
 from langdetect import detect as lang_detect
 import fugashi
 from stopwordsiso import stopwords
+
+PUNCTUATION_SET = set(string.punctuation + '。、「」』『【】・（）　')
 
 # --- Logging Setup ---
 # EN: Configure logging for debugging and monitoring
@@ -226,6 +230,13 @@ def mixed_sentence_tokenize_for_authorship(text: str):
 
 # app.py の tokenize_mixed_for_authorship 関数を以下のように置き換える
 
+def remove_punctuation_from_token(token: str) -> str:
+    return ''.join(char for char in token if char not in PUNCTUATION_SET)
+
+def preprocess_tokens_for_search(tokens_list: list[str]) -> list[str]:
+    processed_tokens = [remove_punctuation_from_token(token) for token in tokens_list]
+    return [token for token in processed_tokens if token]
+
 def tokenize_mixed_for_authorship(text: str):
     # EN: Always use English word_tokenize for simplicity and performance on Render free tier.
     # JP: Render無料枠でのシンプルさとパフォーマンスのため、常に英語のword_tokenizeを使用する。
@@ -236,7 +247,6 @@ def tokenize_mixed_for_authorship(text: str):
     #         return word_tokenize(text)
     #     except Exception as e_tok:
     #         logging.error(f"NLTK word_tokenize fallback failed: {e_tok}")
-    #         return text.split()
 
     # try:
     #     # This lang_detect call seems to be causing timeouts
@@ -249,11 +259,14 @@ def tokenize_mixed_for_authorship(text: str):
     # else:
     #     # Default to English tokenization
     try:
-        # Consider lowercasing here if not done elsewhere consistently for TF-IDF
-        return word_tokenize(text) # text.lower() を適用するかはTF-IDFの preprocess との兼ね合い
+        initial_tokens = word_tokenize(text)
     except Exception as e_tok_en:
-        logging.error(f"NLTK word_tokenize for English text failed: {e_tok_en}")
-        return text.split() # text.lower().split()
+        logging.error(f"NLTK word_tokenize for English text failed during authorship tokenization: {e_tok_en}")
+        initial_tokens = text.split()
+
+    punctuation_removed_tokens = preprocess_tokens_for_search(initial_tokens)
+    lowercased_tokens = [token.lower() for token in punctuation_removed_tokens]
+    return lowercased_tokens
     
 def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
     # EN: Build a dataset of sentences and labels for authorship analysis

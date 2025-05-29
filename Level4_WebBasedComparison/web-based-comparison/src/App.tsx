@@ -93,8 +93,8 @@ const App: React.FC = () => {
 
   // EN: State for authorship analysis
   // JP: 著者識別分析用の状態管理
-  const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Plato'); // Placeholder will be more generic below
-  const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Aristotle'); // Placeholder will be more generic below
+  const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Apple'); // Placeholder will be more generic below
+  const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Banana'); // Placeholder will be more generic below
   const [authorshipResult, setAuthorshipResult] = useState<AuthorshipAnalysisResult | null>(null);
   const [authorshipError, setAuthorshipError] = useState("");
   const [authorshipLoading, setAuthorshipLoading] = useState(false);
