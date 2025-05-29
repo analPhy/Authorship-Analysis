@@ -247,10 +247,9 @@ def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len:
 
 # === API Endpoints ===
 
-# app.py (kwic_search 関数 および関連部分の修正)
-
-# ... (既存のインポート、PUNCTUATION_SET, remove_punctuation_from_token, preprocess_tokens_for_search の定義は変更なし) ...
-# ... (他の関数定義も変更なし) ...
+@app.route('/')
+def home():
+    return "Hello, World! This is the home page."
 
 @app.route('/api/search', methods=['POST'])
 def kwic_search():
