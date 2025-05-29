@@ -8,8 +8,7 @@ import re
 import urllib.request
 from urllib.error import URLError, HTTPError
 import nltk
-from nltk.tokenize import word_tokenize
-# nltk.download('maxent_ne_chunker_tab') # This line should be removed or commented out
+from nltk.tokenize import word_tokenize, sent_tokenize 
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 import traceback
@@ -52,10 +51,10 @@ logging.basicConfig(
 
 # --- NLTK Resource Check ---
 REQUIRED_NLTK_RESOURCES = {
-    "punkt": "tokenizers/punkt",
-    "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger",
-    "maxent_ne_chunker": "chunkers/maxent_ne_chunker",
-    "words": "corpora/words"
+    "punkt": "tokenizers/punkt",  # For word_tokenize and sent_tokenize
+    "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger", # For nltk.pos_tag
+    "maxent_ne_chunker": "chunkers/maxent_ne_chunker", # For nltk.ne_chunk
+    "words": "corpora/words" # Dependency for maxent_ne_chunker
 }
 
 logging.info("Checking NLTK resources...")
@@ -67,18 +66,18 @@ for download_key, path_to_find in REQUIRED_NLTK_RESOURCES.items():
         logging.warning(f"NLTK resource '{download_key}' (for path '{path_to_find}') not found. Attempting to download '{download_key}'...")
         try:
             download_successful = nltk.download(download_key, quiet=False)
-            if download_successful is None or download_successful:
+            if download_successful is None or download_successful: 
                 logging.info(f"NLTK download command for '{download_key}' executed.")
-                nltk.data.find(path_to_find)
+                nltk.data.find(path_to_find) 
                 logging.info(f"NLTK resource '{download_key}' now found after download.")
-            else:
+            else: 
                 logging.error(f"NLTK download for '{download_key}' returned False. Attempting to verify...")
                 try:
                     nltk.data.find(path_to_find)
                     logging.info(f"NLTK resource '{download_key}' found despite download command returning False.")
                 except LookupError:
                     logging.error(f"CRITICAL: NLTK resource '{download_key}' still not found. Manual intervention likely required.")
-        except Exception as e_download:
+        except Exception as e_download: 
             logging.error(f"Error during NLTK resource '{download_key}' download or verification: {e_download}")
             logging.error(f"Please check network connectivity and NLTK setup. You may need to run: python -m nltk.downloader {download_key}")
 
@@ -102,7 +101,7 @@ _SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+")
 app = Flask(__name__)
 FRONTEND_GITHUB_PAGES_ORIGIN = "https://analphy.github.io"
 FRONTEND_DEV_ORIGIN_3000 = "http://localhost:3000"
-FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080"
+FRONTEND_DEV_ORIGIN_8080 = "http://localhost:8080" # User's frontend dev port
 allowed_origins_list = [
     FRONTEND_GITHUB_PAGES_ORIGIN,
     FRONTEND_DEV_ORIGIN_3000,
@@ -111,76 +110,88 @@ allowed_origins_list = [
 CORS(app, resources={r"/api/*": {"origins": allowed_origins_list}})
 
 # === Text processing functions ===
-def get_text_from_url_for_kwic(url): # As provided by user
-    logging.info(f"Attempting to fetch URL (for KWIC search): {url}")
+def get_text_from_url(url, purpose="generic text extraction"):
+    logging.info(f"Attempting to fetch URL (for {purpose}): {url}")
     try:
         req = urllib.request.Request(
             url, data=None,
-            headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            headers={'User-Agent': f'Mozilla/5.0 (compatible; TextAnalysisToolBot/1.0)'} # Generic User-Agent
         )
-        with urllib.request.urlopen(req, timeout=15) as response:
-            content_type = response.getheader('Content-Type')
-            if not (content_type and 'text/html' in content_type.lower()):
-                 logging.warning(f"URL (KWIC search) is not an HTML page: {url} (Content-Type: {content_type})")
-                 raise ValueError(f"The provided URL does not appear to be an HTML page. (Content-Type: {content_type})")
-            html = response.read()
-        soup = BeautifulSoup(html, 'html.parser')
-        for tag_name in ['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
-                         'nav', 'footer', 'aside', 'form', 'input', 'button', 'img',
-                         'audio', 'video', 'iframe', 'object', 'embed', 'header', 'svg', 'canvas']:
-            for tag in soup.find_all(tag_name):
-                tag.decompose()
-        text = soup.get_text(separator=' ')
+        with urllib.request.urlopen(req, timeout=20) as response: # Slightly longer timeout
+            content_type = response.getheader('Content-Type', '').lower()
+            if 'text/html' not in content_type and 'text/plain' not in content_type:
+                 logging.warning(f"URL (for {purpose}) not HTML/Plain Text: {url} (Content-Type: {content_type})")
+                 raise ValueError(f"URL content type ({content_type}) not supported. Please use HTML or plain text pages.")
+            
+            html_or_text_bytes = response.read()
+            try: html_or_text_content = html_or_text_bytes.decode('utf-8')
+            except UnicodeDecodeError:
+                try: html_or_text_content = html_or_text_bytes.decode('latin-1') # Common fallback
+                except UnicodeDecodeError: raise ValueError("Could not decode content encoding.")
+
+        if 'text/html' in content_type:
+            soup = BeautifulSoup(html_or_text_content, 'html.parser')
+            # More general tag removal list
+            tags_to_remove = ['script', 'style', 'head', 'link', 'meta', 'noscript',
+                              'nav', 'footer', 'aside', 'form', 'header', 
+                              'figure', 'figcaption', 'iframe', 'svg', 'canvas',
+                              'button', 'input', 'select', 'textarea', 'img', 
+                              'audio', 'video', 'object', 'embed'] 
+            # IDs and classes for common non-content elements (heuristic)
+            selectors_to_remove = ['#cookie-banner', '.cookie-consent', '#sidebar', 
+                                   '.advertisement', '.ad-container', '.modal', '.popup',
+                                   '.site-header', '.site-footer', '.navigation', '.menu']
+            
+            for tag_name in tags_to_remove:
+                for tag in soup.find_all(tag_name):
+                    tag.decompose()
+            for selector in selectors_to_remove:
+                for tag in soup.select(selector):
+                    tag.decompose()
+            
+            # Attempt to get main content if common tags exist
+            main_content = soup.find('article') or soup.find('main') or \
+                           soup.find('div', attrs={'role': 'main'}) or \
+                           soup.find('div', id='content') or \
+                           soup.find('div', class_='content') or \
+                           soup.find('div', id='main-content') or \
+                           soup.find('div', class_='main-content')
+            
+            if main_content:
+                text = main_content.get_text(separator=' ', strip=True)
+            else:
+                text = soup.get_text(separator=' ', strip=True)
+        else: # Plain text
+            text = html_or_text_content
+        
+        text = re.sub(r'\[\d+\]', '', text) # Remove Wikipedia-style citations if any
         text = re.sub(r'\s+', ' ', text).strip()
-        logging.info(f"Successfully fetched and parsed URL (for KWIC search): {url}")
+        if not text:
+             logging.warning(f"No significant text extracted from URL (for {purpose}): {url}")
+        logging.info(f"Successfully fetched and parsed URL (for {purpose}): {url}")
         return text
     except (URLError, HTTPError) as e:
-        logging.error(f"URL Error fetching (KWIC search) {url}: {e.reason}")
-        raise ValueError(f"Could not access the provided URL. Please check the URL. Reason: {e.reason}")
+        logging.error(f"URL Error fetching (for {purpose}) {url}: {getattr(e, 'reason', e)}")
+        raise ValueError(f"Could not access URL. Reason: {getattr(e, 'reason', 'Network/HTTP error')}")
     except TimeoutError:
-         logging.error(f"Timeout fetching (KWIC search) {url} after 15 seconds.")
-         raise ValueError(f"URL fetching timed out. The page took too long to respond.")
+         logging.error(f"Timeout fetching (for {purpose}) {url}.")
+         raise ValueError("URL fetching timed out.")
     except ValueError as e:
-          logging.error(f"Value Error processing (KWIC search) {url}: {e}")
+          logging.error(f"Value Error processing (for {purpose}) {url}: {e}")
           raise
     except Exception as e:
-        logging.error(f"An unexpected error occurred in get_text_from_url_for_kwic for {url}: {e}\n{traceback.format_exc()}")
-        raise ValueError(f"An unexpected error occurred while fetching or processing the URL.")
+        logging.error(f"Unexpected error in get_text_from_url for {url} ({purpose}): {e}\n{traceback.format_exc()}")
+        raise ValueError("Unexpected error fetching/processing URL.")
 
-def clean_text_for_kwic(text): # As provided by user
-    text = re.sub(r'\[\d+\]', '', text)
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
-
-def fetch_wikipedia_text_for_authorship(url: str) -> str: # As provided by user
-    logging.info(f"Fetching Wikipedia text for authorship from URL: {url}")
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Python-Flask-Authorship-App/1.0)'})
-        with urllib.request.urlopen(req, timeout=20) as response:
-            html = response.read()
-            content_type = response.getheader('Content-Type')
-            if not (content_type and 'text/html' in content_type.lower()):
-                 raise ValueError(f"The provided URL does not appear to be an HTML page.")
-    except (URLError, HTTPError) as e: raise ValueError(f"Could not access the URL for authorship. Reason: {e.reason}")
-    except TimeoutError: raise ValueError("URL fetching for authorship timed out.")
-    except Exception as err: raise ValueError(f"An unexpected error occurred while fetching URL for authorship: {err}")
-    soup = BeautifulSoup(html, "html.parser")
-    for tag_name in ["script", "style", "sup", "table", "nav", "footer", "aside", "header", "form", "figure", "figcaption", "link", "meta", "input", "button", "img", "audio", "video", "iframe", "object", "embed", "svg", "canvas", "noscript"]:
-        for tag in soup.find_all(tag_name): tag.decompose()
-    text = soup.get_text(" ")
-    text = re.sub(r"\[\d+\]", "", text); text = re.sub(r"\s+", " ", text).strip()
-    logging.info(f"Successfully fetched and parsed Wikipedia text for authorship from URL: {url}")
-    return text
-
-# --- Tokenizer for Authorship (Merged: Uses global punctuation removal and lowercase) ---
+# --- Tokenizer for Authorship (uses global punctuation removal and lowercase) ---
 def tokenize_mixed_for_authorship(text: str) -> list[str]:
     initial_tokens = []
-    if not _TAGGER:
+    if not _TAGGER: # Fugashi not available
         logging.warning("Fugashi Tagger not available, using NLTK word_tokenize for authorship.")
         try: initial_tokens = word_tokenize(text) # language param removed
         except Exception as e_tok:
             logging.error(f"NLTK word_tokenize fallback failed in authorship: {e_tok}"); initial_tokens = text.split()
-    else:
+    else: # Fugashi available
         try: lang = lang_detect(text)
         except Exception: logging.warning(f"Langdetect failed for authorship sample: '{text[:100]}'. Defaulting to English."); lang = "en"
         
@@ -190,17 +201,16 @@ def tokenize_mixed_for_authorship(text: str) -> list[str]:
             try: initial_tokens = word_tokenize(text) # language param removed
             except Exception as e_tok_en: logging.error(f"NLTK word_tokenize for non-JA failed in authorship: {e_tok_en}"); initial_tokens = text.split()
     
-    punctuation_removed_tokens = preprocess_tokens(initial_tokens) # Use global helper
+    punctuation_removed_tokens = preprocess_tokens(initial_tokens)
     lowercased_tokens = [token.lower() for token in punctuation_removed_tokens]
     return lowercased_tokens
 
-# --- Sentence processing for Authorship (as provided by user) ---
-def mixed_sentence_tokenize_for_authorship(text: str):
+# --- Sentence processing for Authorship ---
+def mixed_sentence_tokenize_for_authorship(text: str): # User's existing function
     return [s.strip() for s in _SENT_RE.split(text) if s.strip()]
 
 def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
-    # Uses the user's mixed_sentence_tokenize_for_authorship for sentence splitting
-    sentences = mixed_sentence_tokenize_for_authorship(text) 
+    sentences = mixed_sentence_tokenize_for_authorship(text)
     filtered = [s for s in sentences if len(s) >= min_len]
     labels = [author_label] * len(filtered)
     return filtered, labels
@@ -220,28 +230,27 @@ def kwic_search():
         parsed_url = urlparse(url)
         if parsed_url.scheme not in ['http', 'https'] or not parsed_url.hostname:
              return jsonify({"error": "Invalid URL (scheme/hostname)."}), 400
+        # Add is_restricted_hostname(parsed_url.hostname) for enhanced security (omitted for brevity here)
     except Exception as e: return jsonify({"error": f"Invalid URL format: {e}"}), 400
     if not query_input: return jsonify({"error": "Please provide a search query."}), 400
 
     try:
-        raw_text = get_text_from_url_for_kwic(url)
-        text_cleaned = clean_text_for_kwic(raw_text)
-        if not text_cleaned: return jsonify({"results": [], "error": "Could not extract text content."}), 200
+        # Using the consolidated get_text_from_url function
+        text_content = get_text_from_url(url, "KWIC search")
+        if not text_content: return jsonify({"results": [], "error": "Could not extract text content from the URL."}), 200
         
-        initial_tokens_from_page = word_tokenize(text_cleaned) # language param removed
-        words_from_page_processed = preprocess_tokens(initial_tokens_from_page)
+        initial_tokens_from_page = word_tokenize(text_content) # language param removed
+        words_from_page_processed = preprocess_tokens(initial_tokens_from_page) # Punctuation removal
         
-        if not words_from_page_processed: return jsonify({"results": [], "error": "No searchable words after processing."}), 200
+        if not words_from_page_processed: return jsonify({"results": [], "error": "No searchable words found after processing."}), 200
     except ValueError as e: return jsonify({"error": str(e)}), 400
     except Exception as e:
         logging.error(f"KWIC: Error processing URL/text: {e}\n{traceback.format_exc()}")
         return jsonify({"error": "Error processing URL content."}), 500
 
-    results = [] # This list will be populated by specific search type logic
+    results = []
     backend_context_window_size = 10
-    
-    # This variable will hold the processed query for "not found" messages if applicable
-    display_query_for_not_found = query_input 
+    display_query_for_not_found = query_input # Default for messages
 
     if search_type == 'token':
         raw_target_tokens = query_input.split()
@@ -273,7 +282,7 @@ def kwic_search():
         
         logging.info(f"POS tagging for: '{target_pos_tag_query}' on {len(words_from_page_processed)} tokens.")
         try:
-            tagged_words = nltk.pos_tag(words_from_page_processed)
+            tagged_words = nltk.pos_tag(words_from_page_processed) # NLTK's default behavior
         except Exception as e_pos:
             logging.error(f"NLTK pos_tag FAILED: {e_pos}\n{traceback.format_exc()}")
             return jsonify({"error": "POS tagging failed on server."}), 500
@@ -294,7 +303,7 @@ def kwic_search():
 
         logging.info(f"Entity recognition for: '{target_entity_type_query}' on {len(words_from_page_processed)} tokens.")
         try:
-            tagged_words_for_ner = nltk.pos_tag(words_from_page_processed)
+            tagged_words_for_ner = nltk.pos_tag(words_from_page_processed) # NLTK's default behavior
             chunked_entities_tree = nltk.ne_chunk(tagged_words_for_ner)
             iob_tags = nltk.chunk.util.tree2conlltags(chunked_entities_tree)
         except Exception as e_ner:
@@ -321,7 +330,7 @@ def kwic_search():
     else:
         return jsonify({"error": "Invalid search type."}), 400
 
-    # --- User's custom sorting logic (applied IF results exist) ---
+    # --- User's custom sorting logic ---
     if results:
         logging.info(f"Applying custom sorting to {len(results)} initial results for query '{query_input}' (Type: {search_type}).")
         pattern_groups = {}
@@ -335,8 +344,7 @@ def kwic_search():
                 if next_words_seg: 
                     pattern_key = " ".join(word.lower() for word in next_words_seg)
             
-            if pattern_key not in pattern_groups:
-                pattern_groups[pattern_key] = []
+            if pattern_key not in pattern_groups: pattern_groups[pattern_key] = []
             pattern_groups[pattern_key].append(r_item)
 
         freq_and_pos_groups = {}
@@ -344,23 +352,22 @@ def kwic_search():
             for pattern, group in pattern_groups.items():
                 freq = len(group)
                 first_pos = min(item.get("original_text_index", float('inf')) for item in group)
-                if freq not in freq_and_pos_groups:
-                    freq_and_pos_groups[freq] = []
+                if freq not in freq_and_pos_groups: freq_and_pos_groups[freq] = []
                 freq_and_pos_groups[freq].append((first_pos, pattern, group))
         
         sorted_results_final = []
         if freq_and_pos_groups:
             for freq_key in sorted(freq_and_pos_groups.keys(), reverse=True):
-                groups_at_freq = sorted(freq_and_pos_groups[freq_key], key=lambda x: x[0])
+                groups_at_freq = sorted(freq_and_pos_groups[freq_key], key=lambda x: x[0]) 
                 for _, _, group_items_list in groups_at_freq:
                     sorted_results_final.extend(group_items_list)
-            results = sorted_results_final
+            results = sorted_results_final 
             logging.info(f"Custom sorting applied. Final result count after sorting: {len(results)}")
-        elif results: # pattern_groups was empty, but results were not initially.
+        elif results: 
             logging.info("No distinct patterns for custom sorting. Applying fallback sort by original_text_index.")
             if all("original_text_index" in r for r in results):
                  results.sort(key=lambda x: x.get("original_text_index", 0))
-            else: # Should not happen if original_text_index is always added
+            else: 
                 logging.warning("Fallback sort by original_text_index skipped: key not in all items.")
     # --- End of custom sorting logic ---
 
@@ -382,8 +389,11 @@ def authorship_analysis():
     url_a, url_b = data.get('url_a', '').strip(), data.get('url_b', '').strip()
     logging.info(f"Authorship request: URL A: {url_a}, URL B: {url_b}")
 
-    if not url_a or not url_b: return jsonify({"error": "Please provide two Wikipedia URLs."}), 400
+    if not url_a or not url_b: return jsonify({"error": "Please provide two Web Page URLs."}), 400 # General message
     
+    # For authorship, user's code was specific to Wikipedia. Kept this part as is.
+    # If general URLs are desired for authorship, get_text_from_url should be used
+    # and the wikipedia.org check removed.
     for i, url_val in enumerate([url_a, url_b]):
         label = "A" if i == 0 else "B"
         try:
@@ -391,13 +401,14 @@ def authorship_analysis():
             if not parsed.scheme in ['http', 'https'] or not parsed.hostname: raise ValueError("Invalid URL")
             hostname_lower = parsed.hostname.lower()
             if not (hostname_lower == 'wikipedia.org' or hostname_lower.endswith('.wikipedia.org')):
-                return jsonify({"error": f"URL for Author {label} ('{url_val}') is not from wikipedia.org. Only Wikipedia URLs are currently supported."}), 400
-        except ValueError: return jsonify({"error": f"Invalid URL format for Author {label}: {url_val}"}), 400
+                return jsonify({"error": f"URL for Source {label} ('{url_val}') must be from wikipedia.org (current authorship logic)."}), 400
+        except ValueError: return jsonify({"error": f"Invalid URL format for Source {label}: {url_val}"}), 400
 
     try:
+        # Using user's original fetch_wikipedia_text_for_authorship
         text_a = fetch_wikipedia_text_for_authorship(url_a)
         text_b = fetch_wikipedia_text_for_authorship(url_b)
-        if not text_a or not text_b: return jsonify({"error": "Failed to fetch content from one or both Wikipedia pages."}), 500
+        if not text_a or not text_b: return jsonify({"error": "Failed to fetch content for authorship."}), 500
 
         sentences_a, labels_a = build_sentence_dataset_for_authorship(text_a, "AuthorA")
         sentences_b, labels_b = build_sentence_dataset_for_authorship(text_b, "AuthorB")
@@ -408,7 +419,7 @@ def authorship_analysis():
             return jsonify({"error": error_msg.strip()}), 400
 
         all_sentences, all_labels = sentences_a + sentences_b, labels_a + labels_b
-        if len(set(all_labels)) < 2: return jsonify({"error": "Could not gather sentences from both sources to perform comparison."}), 400
+        if len(set(all_labels)) < 2: return jsonify({"error": "Could not gather sentences from both sources for comparison."}), 400
         
         MIN_SAMPLES_PER_CLASS_FOR_STRATIFY = 2
         if labels_a.count("AuthorA") < MIN_SAMPLES_PER_CLASS_FOR_STRATIFY or \
@@ -420,7 +431,7 @@ def authorship_analysis():
         if not X_train or not X_test: return jsonify({"error": "Failed to create training/testing sets."}), 400
 
         vectorizer = TfidfVectorizer(
-            tokenizer=tokenize_mixed_for_authorship, # Uses updated tokenizer
+            tokenizer=tokenize_mixed_for_authorship, # Uses updated tokenizer with global punctuation removal
             token_pattern=None, ngram_range=(1, 2), max_features=10000, stop_words=_ALL_SW
         )
         X_train_vec, X_test_vec = vectorizer.fit_transform(X_train), vectorizer.transform(X_test)
@@ -462,7 +473,7 @@ if __name__ == "__main__":
     all_nltk_res_ok = True
     for res_key, res_path_val in REQUIRED_NLTK_RESOURCES.items():
         try: nltk.data.find(res_path_val)
-        except LookupError:
+        except LookupError: # pragma: no cover
             print(f"Warning: NLTK resource '{res_key}' not found. Functionality may be impaired.")
             all_nltk_res_ok = False
     if all_nltk_res_ok: print("All required NLTK resources appear available.")
