@@ -21,22 +21,42 @@ import string
 
 import nltk
 
-try:
-    # 必要なリソースが既に存在するか確認 (省略可能だが効率的)
-    nltk.data.find('taggers/averaged_perceptron_tagger_eng')
-except nltk.downloader.DownloadError:
-    print("Downloading NLTK resource 'averaged_perceptron_tagger_eng'...")
-    nltk.download('averaged_perceptron_tagger_eng', quiet=True) # quiet=Trueでダウンロードログを抑制
-except LookupError: # こちらの例外も補足した方が良い場合がある
-    print("NLTK resource 'averaged_perceptron_tagger_eng' not found, downloading...")
-    nltk.download('averaged_perceptron_tagger_eng', quiet=True)
+# ダウンロードが必要なNLTKリソースのリスト
+# (キー: nltk.data.find で使用するパス, 値: nltk.download で使用するID)
+required_nltk_resources = {
+    "taggers/averaged_perceptron_tagger": "averaged_perceptron_tagger",
+    "tokenizers/punkt": "punkt",
+    "corpora/words": "words",
+    "chunkers/maxent_ne_chunker": "maxent_ne_chunker",
+    "chunkers/maxent_ne_chunker_tab": "maxent_ne_chunker_tab", # ログにあったもの
+    # エラーで 'averaged_perceptron_tagger_eng' を要求された場合は以下を試すか、上記を置き換える
+    # "taggers/averaged_perceptron_tagger_eng": "averaged_perceptron_tagger_eng",
+}
 
-# 他にも必要なNLTKリソースがあれば同様に追加
-# 例:
-# try:
-#     nltk.data.find('tokenizers/punkt')
-# except LookupError:
-#     nltk.download('punkt', quiet=True)
+all_resources_found = True
+for resource_path, download_id in required_nltk_resources.items():
+    try:
+        nltk.data.find(resource_path)
+        print(f"NLTK resource '{download_id}' found at '{resource_path}'.")
+    except LookupError:
+        print(f"NLTK resource '{download_id}' for path '{resource_path}' not found.")
+        # Build Command でダウンロードしているはずなので、ここに来る場合は問題。
+        # 必要に応じて、ここで再度ダウンロードを試みるか、エラーとして扱う。
+        # 例: アプリケーション起動時にどうしてもダウンロードが必要な場合
+        # print(f"Attempting to download '{download_id}'...")
+        # try:
+        #     nltk.download(download_id, quiet=True)
+        #     nltk.data.find(resource_path) # 再度確認
+        #     print(f"Successfully downloaded '{download_id}'.")
+        # except Exception as e:
+        #     print(f"Failed to download '{download_id}' during app startup: {e}")
+        #     all_resources_found = False
+        all_resources_found = False # Build Commandでダウンロードする前提なら、ここに来たらエラー
+
+if not all_resources_found:
+    print("CRITICAL: Not all NLTK resources were found. Please check the build process.")
+    # アプリケーションを正常に動作させられない場合はここで終了させることも検討
+    # sys.exit(1)
 
 # --- NEW: spaCy for more accurate NER (minimal addition) ---
 try:
