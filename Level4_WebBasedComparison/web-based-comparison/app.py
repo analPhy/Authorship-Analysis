@@ -19,6 +19,15 @@ import traceback
 import logging
 import sys
 
+# --- NEW: spaCy for more accurate NER (minimal addition) ---
+try:
+    import spacy
+    _SPACY_NLP = spacy.load("en_core_web_sm")
+    logging.info("spaCy 'en_core_web_sm' model loaded for NER.")
+except Exception as e_spa:
+    _SPACY_NLP = None
+    logging.warning(f"spaCy not available or model load failed: {e_spa}. Falling back to NLTK NER.")
+
 # --- Authorship Attribution Imports ---
 # EN: Import scikit-learn modules for authorship analysis
 # JP: 著者識別分析用のscikit-learnモジュールをインポート
@@ -61,60 +70,43 @@ for download_key, path_to_find in REQUIRED_NLTK_RESOURCES.items():
     except LookupError:
         logging.warning(f"NLTK resource '{download_key}' (for path '{path_to_find}') not found. Attempting to download '{download_key}'...")
         try:
-            # EN: Attempt to download the resource
-            # JP: リソースのダウンロードを試みる
             download_successful = nltk.download(download_key, quiet=False)
-            
             if download_successful:
                 logging.info(f"NLTK download command for '{download_key}' executed, appearing successful.")
                 nltk.data.find(path_to_find)
                 logging.info(f"NLTK resource '{download_key}' now found after download.")
             else:
-                logging.error(f"NLTK download for '{download_key}' returned False. Attempting to verify if it's available anyway...")
+                logging.error(f"NLTK download for '{download_key}' returned False. Will verify separately.")
                 try:
                     nltk.data.find(path_to_find)
-                    logging.info(f"NLTK resource '{download_key}' found despite download command returning False (perhaps already existed or downloaded by other means).")
+                    logging.info(f"NLTK resource '{download_key}' found despite download command returning False.")
                 except LookupError:
-                    logging.error(f"CRITICAL: NLTK resource '{download_key}' still not found after download command returned False. Manual intervention likely required.")
-        
+                    logging.error(f"CRITICAL: NLTK resource '{download_key}' still not found after attempted download.")
         except Exception as e_download:
-            logging.error(f"Error during NLTK resource '{download_key}' download or verification: {e_download}")
-            logging.error(f"Please check network connectivity and NLTK setup. You may need to run: python -m nltk.downloader {download_key}")
+            logging.error(f"Error downloading NLTK resource '{download_key}': {e_download}")
 
 # --- Global Settings for Authorship Attribution ---
-# EN: Initialize Japanese tokenizer and stopwords
-# JP: 日本語トークナイザーとストップワードの初期化
 _TAGGER = None
 try:
     _TAGGER = fugashi.Tagger()
     logging.info("fugashi Tagger initialized successfully.")
 except Exception as e:
-    logging.error(f"Failed to initialize fugashi Tagger: {e}. Japanese tokenization for authorship will not work.")
+    logging.error(f"Failed to initialize fugashi Tagger: {e}. Japanese tokenization disabled.")
 
-_EN_SW = set()
-_JA_SW = set()
 try:
     _EN_SW = stopwords("en")
     _JA_SW = stopwords("ja")
-    logging.info("English and Japanese stopwords (for authorship) loaded.")
-except Exception as e:
-    logging.error(f"Failed to load stopwords (for authorship): {e}")
-
+    logging.info("English and Japanese stopwords loaded.")
+except Exception as e_sw:
+    logging.error(f"Failed to load stopwords: {e_sw}")
+    _EN_SW, _JA_SW = set(), set()
 _ALL_SW = sorted(list(_EN_SW.union(_JA_SW)))
 
-# EN: Regex for sentence splitting (Japanese and English)
-# JP: 文分割用の正規表現（日本語・英語対応）
 _SENT_RE = re.compile(r"(?<=。)|(?<=[.!?])\s+")
 
 # --- Flask App Setup ---
-# EN: Create Flask app and configure CORS
-# JP: Flaskアプリの作成とCORS設定
 app = Flask(__name__)
-
-allowed_origins = [
-    "http://localhost:3000",
-    # "https://your-production-react-app.com", # PRODUCTION: Replace with your frontend domain
-]
+allowed_origins = ["http://localhost:3000"]
 CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 
 # === Text processing for KWIC Search ===
@@ -138,13 +130,31 @@ def get_text_from_url_for_kwic(url):
             html = response.read()
 
         soup = BeautifulSoup(html, 'html.parser')
-        # EN: Remove unnecessary tags
-        # JP: 不要なタグを除去
+        
+        # First remove any generic elements we don't want
         for tag in soup(['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
-                         'nav', 'footer', 'aside', 'form', 'input', 'button', 'img',
-                         'audio', 'video', 'iframe', 'object', 'embed', 'header', 'svg', 'canvas']):
+                        'nav', 'footer', 'aside', 'form', 'input', 'button', 'img',
+                        'audio', 'video', 'iframe', 'object', 'embed', 'header', 'svg', 'canvas']):
             tag.decompose()
-        text = soup.get_text(separator=' ')
+            
+        # EN: Find and clean the main content
+        # JP: メインコンテンツを探して整形
+        content = soup.find(id='mw-content-text')
+        if content:
+            # Remove navigation, references, metadata sections and other Wikipedia elements
+            wiki_elements = ['toc', 'reference', 'reflist', 'navbox', 'metadata', 'catlinks', 
+                           'mw-editsection', 'mw-references', 'mw-navigation', 'mw-footer',
+                           'sistersitebox', 'noprint', 'mw-jump-to-nav', 'mw-indicator',
+                           'mw-wiki-logo', 'mw-page-tools', 'printfooter', 'mw-revision']
+            
+            for element in content.find_all(['div', 'section', 'span', 'nav', 'footer']):
+                if any(cls in (element.get('class', []) or []) for cls in wiki_elements):
+                    element.decompose()
+            
+            text = content.get_text(separator=' ')
+        else:
+            # Fallback to full page if main content section not found
+            text = soup.get_text(separator=' ')
         text = re.sub(r'\s+', ' ', text).strip()
         logging.info(f"Successfully fetched and parsed URL (for KWIC search): {url}")
         return text
@@ -162,9 +172,28 @@ def get_text_from_url_for_kwic(url):
         raise ValueError(f"An unexpected error occurred while fetching or processing the URL.")
 
 def clean_text_for_kwic(text):
-    # EN: Remove citation numbers and extra spaces
-    # JP: 参照番号や余分な空白を除去
-    text = re.sub(r'\[\d+\]', '', text)
+    # EN: Remove Wikipedia-specific content and clean text
+    # JP: Wikipedia特有のコンテンツを除去してテキストを整形
+    
+    # Remove navigation elements and metadata
+    text = re.sub(r'Jump to.*?content', '', text)
+    text = re.sub(r'From Wikipedia.*?encyclopedia', '', text)
+    text = re.sub(r'Categories\s*:.*', '', text)
+    text = re.sub(r'Hidden categories\s*:.*', '', text)
+    
+    # Remove common Wikipedia elements
+    text = re.sub(r'\[\d+\]', '', text)  # citations
+    text = re.sub(r'Edit.*?section', '', text)  # edit section links
+    text = re.sub(r'oldid=\d+', '', text)  # oldid references
+    text = re.sub(r'\s*\(\s*disambiguation\s*\)\s*', '', text)  # disambiguation notes
+    text = re.sub(r'CS1.*?sources.*$', '', text, flags=re.MULTILINE)  # CS1 source notes
+    text = re.sub(r'Articles.*?containing.*$', '', text, flags=re.MULTILINE)  # Article metadata
+    text = re.sub(r'Use mdy dates.*$', '', text, flags=re.MULTILINE)  # Date format notes
+    
+    # Remove any remaining Category tags
+    text = re.sub(r'Category:.*?(?=\n|$)', '', text)
+    
+    # Clean up extra whitespace
     text = re.sub(r'\s+', ' ', text).strip()
     return text
 
@@ -195,13 +224,37 @@ def fetch_wikipedia_text_for_authorship(url: str) -> str:
         raise ValueError(f"An unexpected error occurred while fetching URL for authorship.")
 
     soup = BeautifulSoup(html, "html.parser")
-    # EN: Remove unnecessary tags
-    # JP: 不要なタグを除去
-    for tag in soup(["script", "style", "sup", "table", "nav", "footer", "aside", "header", "form", "figure", "figcaption", "link", "meta", "input", "button", "img", "audio", "video", "iframe", "object", "embed", "svg", "canvas", "noscript"]):
+    
+    # First remove any generic elements we don't want
+    for tag in soup(['script', 'style', 'sup', 'table', 'head', 'link', 'meta', 'noscript',
+                     'nav', 'footer', 'aside', 'form', 'input', 'button', 'img',
+                     'audio', 'video', 'iframe', 'object', 'embed', 'header', 'svg', 'canvas']):
         tag.decompose()
-    text = soup.get_text(" ")
-    text = re.sub(r"\[\d+\]", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
+            
+    # EN: Find and clean the main content
+    # JP: メインコンテンツを探して整形
+    content = soup.find(id='mw-content-text')
+    if content:
+        # Remove navigation, references, and metadata sections
+        for section in content.find_all(['div', 'section'], class_=['toc', 'reference', 'reflist', 'navbox', 'metadata', 'catlinks']):
+            section.decompose()
+        
+        # Remove specific Wikipedia elements
+        for element in content.find_all(['span', 'div'], class_=['mw-editsection', 'reference', 'reflist']):
+            element.decompose()
+            
+        text = content.get_text(separator=' ')
+    else:
+        # Fallback to full page if main content section not found
+        text = soup.get_text(separator=' ')
+        
+    # Clean up the text
+    text = re.sub(r'\[\d+\]', '', text)  # citations
+    text = re.sub(r'Edit.*?section', '', text)  # edit section links
+    text = re.sub(r'Jump to.*?content', '', text)  # navigation elements
+    text = re.sub(r'From Wikipedia.*?encyclopedia', '', text)  # wiki header
+    text = re.sub(r'Categories\s*:.*', '', text)  # categories
+    text = re.sub(r'\s+', ' ', text).strip()
     logging.info(f"Successfully fetched and parsed Wikipedia text for authorship from URL: {url}")
     return text
 
@@ -252,8 +305,6 @@ def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len:
 
 @app.route('/api/search', methods=['POST'])
 def kwic_search():
-    # EN: KWIC search API endpoint
-    # JP: KWIC検索APIエンドポイント
     data = request.json
     url = data.get('url', '').strip()
     query_input = data.get('query', '').strip()
@@ -377,49 +428,75 @@ def kwic_search():
                 })
                 
     elif search_type == 'entity':
-        try:
-            tagged_words_for_ner = nltk.pos_tag(words_from_page_original_case)
-            chunked_entities_tree = nltk.ne_chunk(tagged_words_for_ner)
-            iob_tags = nltk.chunk.util.tree2conlltags(chunked_entities_tree)
-        except Exception as e_ner:
-            logging.error(f"NLTK entity recognition failed: {e_ner}\n{traceback.format_exc()}")
-            return jsonify({"error": "Entity recognition processing failed on the server."}), 500
-
         target_entity_type_query = query_input.upper()
-        
-        idx = 0
-        while idx < len(iob_tags):
-            word_original, _, iob_label = iob_tags[idx]
-            
-            if iob_label.startswith('B-') and iob_label[2:] == target_entity_type_query:
-                current_entity_original_words = [word_original]
-                entity_start_index_in_page = idx
-                
-                next_idx = idx + 1
-                while next_idx < len(iob_tags):
-                    next_word_original, _, next_iob_label = iob_tags[next_idx]
-                    if next_iob_label.startswith('I-') and next_iob_label[2:] == target_entity_type_query:
-                        current_entity_original_words.append(next_word_original)
-                        next_idx += 1
-                    else:
-                        break
-                
-                num_entity_tokens = len(current_entity_original_words)
-                before = words_from_page_original_case[max(0, entity_start_index_in_page - backend_context_window_size): entity_start_index_in_page]
-                after = words_from_page_original_case[next_idx : next_idx + backend_context_window_size]
-                
-                context_words_list = before + current_entity_original_words + after
-                result_matched_start = len(before)
-                result_matched_end = result_matched_start + num_entity_tokens
-                
-                results.append({
-                    "context_words": context_words_list,
-                    "matched_start": result_matched_start,
-                    "matched_end": result_matched_end
-                })
-                idx = next_idx
-            else:
-                idx += 1
+        words_from_page_lower = [w.lower() for w in words_from_page_original_case]
+
+        # Prefer spaCy if available for better accuracy
+        spacy_ran = False
+        if _SPACY_NLP:
+            try:
+                doc = _SPACY_NLP(" ".join(words_from_page_original_case))
+                spacy_ran = True
+                seen_token_spans = set()
+                for ent in doc.ents:
+                    if ent.label_.upper() == target_entity_type_query:
+                        ent_tokens = word_tokenize(ent.text)
+                        ent_tokens_lower = [t.lower() for t in ent_tokens]
+                        n_ent = len(ent_tokens_lower)
+                        # Find first matching slice in token list
+                        for i in range(len(words_from_page_lower) - n_ent + 1):
+                            if tuple(words_from_page_lower[i:i+n_ent]) == tuple(ent_tokens_lower):
+                                if (i, i+n_ent) in seen_token_spans:
+                                    break
+                                seen_token_spans.add((i, i+n_ent))
+                                before = words_from_page_original_case[max(0, i-backend_context_window_size):i]
+                                after = words_from_page_original_case[i+n_ent:i+n_ent+backend_context_window_size]
+                                context_words_list = before + words_from_page_original_case[i:i+n_ent] + after
+                                results.append({
+                                    "context_words": context_words_list,
+                                    "matched_start": len(before),
+                                    "matched_end": len(before)+n_ent
+                                })
+                                break
+            except Exception as e_spa_entity:
+                logging.error(f"spaCy entity extraction failed: {e_spa_entity}. Falling back to NLTK.\n{traceback.format_exc()}")
+                spacy_ran = False
+
+        if not spacy_ran:  # Fallback to original NLTK logic
+            try:
+                tagged_words_for_ner = nltk.pos_tag(words_from_page_original_case)
+                chunked_entities_tree = nltk.ne_chunk(tagged_words_for_ner)
+                iob_tags = nltk.chunk.util.tree2conlltags(chunked_entities_tree)
+            except Exception as e_ner:
+                logging.error(f"NLTK entity recognition failed: {e_ner}\n{traceback.format_exc()}")
+                return jsonify({"error": "Entity recognition processing failed on the server."}), 500
+
+            idx = 0
+            while idx < len(iob_tags):
+                word_original, _, iob_label = iob_tags[idx]
+                if iob_label.startswith('B-') and iob_label[2:] == target_entity_type_query:
+                    entity_words = [word_original]
+                    start_idx = idx
+                    next_idx = idx+1
+                    while next_idx < len(iob_tags):
+                        next_word, _, next_label = iob_tags[next_idx]
+                        if next_label.startswith('I-') and next_label[2:] == target_entity_type_query:
+                            entity_words.append(next_word)
+                            next_idx += 1
+                        else:
+                            break
+                    n_ent = len(entity_words)
+                    before = words_from_page_original_case[max(0, start_idx-backend_context_window_size):start_idx]
+                    after = words_from_page_original_case[next_idx:next_idx+backend_context_window_size]
+                    context_words_list = before + entity_words + after
+                    results.append({
+                        "context_words": context_words_list,
+                        "matched_start": len(before),
+                        "matched_end": len(before)+n_ent
+                    })
+                    idx = next_idx
+                else:
+                    idx += 1
 
     if not results:
         logging.info(f"Query '{query_input}' (Type: {search_type}) not found in text from {url}")
@@ -428,35 +505,59 @@ def kwic_search():
             "error": f"The query '{query_input}' (Type: {search_type}) was not found in the text from the provided URL."
         }), 200
 
-    # Group results by the next few words after match
-    pattern_groups = {}
-    for result in results:
-        matched_end = result["matched_end"]
-        context_words = result["context_words"]
-        if matched_end < len(context_words):
-            # Take up to 3 words after the match to form a pattern
-            next_words = context_words[matched_end:min(matched_end + 3, len(context_words))]
-            pattern = " ".join(word.lower() for word in next_words)
-            if pattern not in pattern_groups:
-                pattern_groups[pattern] = []
-            pattern_groups[pattern].append(result)
+    # Get the sort method from request, default to 'sequential'
+    sort_method = request.json.get('sort_method', 'sequential')
 
-    # First group by frequency and first occurrence
-    freq_and_pos_groups = {}
-    for pattern, group in pattern_groups.items():
-        freq = len(group)
-        first_pos = min(result["matched_start"] for result in group)
-        if freq not in freq_and_pos_groups:
-            freq_and_pos_groups[freq] = []
-        freq_and_pos_groups[freq].append((first_pos, pattern, group))
+    if sort_method == 'sequential':
+        # Just return results in order found
+        sorted_results = results
+        
+    elif sort_method == 'token':
+        # Group results by the next token after match
+        token_groups = {}
+        for result in results:
+            matched_end = result["matched_end"]
+            context_words = result["context_words"]
+            if matched_end < len(context_words):
+                next_token = context_words[matched_end].lower()  # Just take the next single token
+                if next_token not in token_groups:
+                    token_groups[next_token] = []
+                token_groups[next_token].append(result)
+
+        # Sort by token frequency
+        sorted_results = []
+        token_freqs = [(token, len(group)) for token, group in token_groups.items()]
+        for token, _ in sorted(token_freqs, key=lambda x: (-x[1], x[0])):  # Sort by freq desc, then token asc
+            sorted_results.extend(token_groups[token])
+
+    elif sort_method == 'pos':
+        # Tag the results and group by POS of next word
+        pos_groups = {}
+        for result in results:
+            matched_end = result["matched_end"]
+            context_words = result["context_words"]
+            if matched_end < len(context_words):
+                next_words = context_words[matched_end:matched_end + 1]  # Get next word
+                try:
+                    tagged = nltk.pos_tag(next_words)
+                    if tagged:
+                        pos_tag = tagged[0][1]  # Get POS tag of next word
+                        if pos_tag not in pos_groups:
+                            pos_groups[pos_tag] = []
+                        pos_groups[pos_tag].append(result)
+                except Exception as e_pos:
+                    logging.error(f"POS tagging failed for sorting: {e_pos}")
+                    continue
+
+        # Sort by POS tag frequency
+        sorted_results = []
+        pos_freqs = [(pos, len(group)) for pos, group in pos_groups.items()]
+        for pos, _ in sorted(pos_freqs, key=lambda x: (-x[1], x[0])):  # Sort by freq desc, then POS tag asc
+            sorted_results.extend(pos_groups[pos])
     
-    # Sort by frequency (descending) and position (ascending)
-    sorted_results = []
-    for freq in sorted(freq_and_pos_groups.keys(), reverse=True):
-        # Sort groups of same frequency by their first occurrence position
-        groups = sorted(freq_and_pos_groups[freq], key=lambda x: x[0])
-        for _, _, group in groups:
-            sorted_results.extend(group)
+    else:
+        # Invalid sort method, default to sequential
+        sorted_results = results
         
     logging.info(f"Found {len(results)} occurrences for query '{query_input}' (Type: {search_type}) in text from {url}")
     return jsonify({"results": sorted_results})
