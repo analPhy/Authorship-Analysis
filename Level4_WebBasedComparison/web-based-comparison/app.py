@@ -50,13 +50,13 @@ logging.basicConfig(
     stream=sys.stdout
 )
 
-# --- NLTK Resource Check ---
+# app.py の NLTKリソース定義部分
 REQUIRED_NLTK_RESOURCES = {
-    "punkt": "tokenizers/punkt",
+    "punkt": "tokenizers/punkt",  # 標準の文分割モデル
+    # "punkt_tab": "tokenizers/punkt_tab", # ← この行をコメントアウトまたは削除
     "averaged_perceptron_tagger": "taggers/averaged_perceptron_tagger",
     "maxent_ne_chunker": "chunkers/maxent_ne_chunker",
-    "words": "corpora/words",
-    # "punkt_tab": "tokenizers/punkt_tab", # Usually punkt is sufficient. Kept if user had specific reason.
+    "words": "corpora/words"
 }
 
 logging.info("Checking NLTK resources...")
@@ -186,7 +186,7 @@ def tokenize_mixed_for_authorship(text: str) -> list[str]:
     initial_tokens = []
     if not _TAGGER:
         logging.warning("Fugashi Tagger not available, using NLTK word_tokenize for authorship.")
-        try: initial_tokens = word_tokenize(text)
+        try: initial_tokens = word_tokenize(text, language='english') # Using NLTK's word_tokenize for consistency
         except Exception as e_tok:
             logging.error(f"NLTK word_tokenize fallback failed in authorship: {e_tok}"); initial_tokens = text.split()
     else:
@@ -234,7 +234,7 @@ def kwic_search():
         raw_text = get_text_from_url_for_kwic(url)
         text_cleaned = clean_text_for_kwic(raw_text)
         if not text_cleaned: return jsonify({"results": [], "error": "Could not extract text."}), 200
-        initial_tokens_from_page = word_tokenize(text_cleaned)
+        initial_tokens_from_page = word_tokenize(text_cleaned, language='english') # Using NLTK's word_tokenize for consistency
         words_from_page_processed = preprocess_tokens(initial_tokens_from_page)
         if not words_from_page_processed: return jsonify({"results": [], "error": "No searchable words after processing."}), 200
     except ValueError as e: return jsonify({"error": str(e)}), 400
