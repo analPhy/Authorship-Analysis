@@ -5,7 +5,6 @@
 // JP: Reactとaxiosをインポート（コンポーネント作成とHTTPリクエスト用）
 import React, { useState /* useMemo was not used, can be removed if not planned elsewhere */ } from 'react';
 import axios from 'axios';
-import { ClipLoader } from 'react-spinners';
 
 // --- KWIC Search Types (旧 Phrase Search) ---
 // EN: Types for KWIC search results and API response
@@ -50,29 +49,6 @@ interface AuthorshipAnalysisResult {
 // JP: KWIC検索タイプの選択肢
 type SearchType = 'token' | 'pos' | 'entity';
 
-// EN: Custom style for the loader container
-// JP: ローダーコンテナ用のカスタムスタイル
-const loaderContainerStyle: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '40px 20px',
-    border: '1px dashed #ddd',
-    borderRadius: '8px',
-    backgroundColor: '#fcfcfc',
-    margin: '25px 0',
-    textAlign: 'center'
-};
-
-const loaderTextStyle: React.CSSProperties = {
-    marginTop: '20px',
-    color: '#555',
-    fontSize: '1.1em'
-};
-
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:5000';
-
 const App: React.FC = () => {
   // --- State Hooks ---
   // EN: State for KWIC search
@@ -93,8 +69,8 @@ const App: React.FC = () => {
 
   // EN: State for authorship analysis
   // JP: 著者識別分析用の状態管理
-  const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Apple'); // Placeholder will be more generic below
-  const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Banana'); // Placeholder will be more generic below
+  const [urlA, setUrlA] = useState('https://en.wikipedia.org/wiki/Plato'); // Placeholder will be more generic below
+  const [urlB, setUrlB] = useState('https://en.wikipedia.org/wiki/Aristotle'); // Placeholder will be more generic below
   const [authorshipResult, setAuthorshipResult] = useState<AuthorshipAnalysisResult | null>(null);
   const [authorshipError, setAuthorshipError] = useState("");
   const [authorshipLoading, setAuthorshipLoading] = useState(false);
@@ -137,7 +113,7 @@ const App: React.FC = () => {
 
     try {
       const response = await axios.post<KWICSearchResponse>(
-        `${API_BASE_URL}/api/search`, // Ensure this port matches your Flask server
+        "http://localhost:8080/api/search", // Ensure this port matches your Flask server
         { 
             url: url.trim(), 
             query: searchQuery.trim(),
@@ -193,7 +169,7 @@ const App: React.FC = () => {
 
     try {
         const response = await axios.post<AuthorshipAnalysisResult>(
-            `${API_BASE_URL}/api/authorship`, // Ensure this port matches your Flask server
+            "http://localhost:8080/api/authorship", // Ensure this port matches your Flask server
             { url_a: urlA.trim(), url_b: urlB.trim() },
             { headers: { "Content-Type": "application/json" } }
         );
@@ -336,14 +312,6 @@ const App: React.FC = () => {
         </details>
         
         {kwicError && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {kwicError}</p>}
-
-        {/* EN: KWIC Loading Indicator / JP: KWIC検索中のローディング表示 */}
-    {kwicLoading && (
-  <div style={loaderContainerStyle}>
-    <ClipLoader color={"#3498db"} loading={kwicLoading} size={50} aria-label="Loading Spinner" />
-    <p style={loaderTextStyle}>Searching for results...</p>
-  </div>
-)}
         
         {kwicResults.length > 0 && !kwicLoading && (
           <div style={{ marginTop: '25px' }}>
@@ -389,10 +357,10 @@ const App: React.FC = () => {
               </ul>
           </div>
         )}
-        {!kwicLoading && !kwicError && kwicResults.length === 0 && kwicSearchAttempted && (
+        {!kwicError && kwicResults.length === 0 && kwicSearchAttempted && !kwicLoading && (
            <p style={{ marginTop: '15px', color: '#7f8c8d', background: '#ecf0f1', padding: '10px', borderRadius: '4px' }}>No results found for "{searchQuery}" (Type: {searchType}).</p>
         )}
-        {!kwicLoading && !kwicError && kwicResults.length === 0 && !kwicSearchAttempted && (
+        {!kwicError && kwicResults.length === 0 && !kwicSearchAttempted && !kwicLoading && (
            <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter a Web Page URL and query to begin KWIC searching.</p> // Changed
         )}
       </section>
@@ -436,15 +404,7 @@ const App: React.FC = () => {
 
         {authorshipError && <p style={{ color: "#e74c3c", marginTop: '15px', background: '#fceded', padding: '10px', borderRadius: '4px' }}>⚠️ {authorshipError}</p>}
 
-        {/* EN: Authorship Loading Indicator / JP: 著者分析中のローディング表示 */}
-{authorshipLoading && (
-  <div style={loaderContainerStyle}>
-    <ClipLoader color={"#27ae60"} loading={authorshipLoading} size={50} aria-label="Loading Spinner" />
-    <p style={loaderTextStyle}>Analyzing authorship... This may take a moment.</p>
-   </div>
-)}
-
-        {!authorshipLoading && authorshipResult && (
+        {authorshipResult && !authorshipLoading && (
             <div style={{ marginTop: '25px' }}>
                 <h3 style={{color: '#16a085'}}>Analysis Results</h3>
                 <div style={{ background: '#ecf0f1', padding: '15px', borderRadius: '4px', marginBottom: '20px' }}>
@@ -502,7 +462,7 @@ const App: React.FC = () => {
                 </div>
             </div>
         )}
-         {!authorshipLoading && !authorshipError && !authorshipResult && (
+         {!authorshipError && !authorshipResult && !authorshipLoading && (
            <p style={{ marginTop: '15px', color: '#95a5a6' }}>Enter two Web Page URLs and click "Analyze Authorship" to view the analysis.</p> // Changed
         )}
       </section>
