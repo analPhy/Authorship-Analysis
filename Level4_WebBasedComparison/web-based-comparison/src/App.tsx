@@ -125,7 +125,27 @@ const App: React.FC = () => {
         setKwicError(response.data.error);
         setKwicResults([]);
       } else {
-        setKwicResults(response.data.results || []); 
+        // POSタグ検索の場合はresultsを平坦化
+        if (searchType === "pos" && Array.isArray(response.data.results)) {
+          const flatResults: KWICSearchResult[] = [];
+          response.data.results.forEach((group: any) => {
+            if (Array.isArray(group.contexts)) {
+              group.contexts.forEach((ctx: any) => {
+                // context_words等が存在する場合のみ追加
+                if (ctx && Array.isArray(ctx.context_words)) {
+                  flatResults.push({
+                    context_words: ctx.context_words,
+                    matched_start: ctx.matched_start,
+                    matched_end: ctx.matched_end,
+                  });
+                }
+              });
+            }
+          });
+          setKwicResults(flatResults);
+        } else {
+          setKwicResults(response.data.results || []);
+        }
         setKwicError("");
       }
     } catch (err: any) {
