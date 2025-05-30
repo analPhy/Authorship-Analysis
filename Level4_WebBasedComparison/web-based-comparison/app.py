@@ -473,7 +473,7 @@ def kwic_search():
         results = []
         # --- POS検索のロジックここまで ---
 
-    elif search_type == 'entity':
+    if search_type == 'entity':
         # ★★★ Entity検索のロジックとソートを修正 ★★★
         target_entity_type_query = query_input.strip().upper()
         if not target_entity_type_query or " " in target_entity_type_query:
