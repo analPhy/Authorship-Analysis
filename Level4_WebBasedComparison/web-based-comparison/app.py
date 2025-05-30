@@ -385,71 +385,92 @@ def kwic_search():
             results.sort(key=lambda x: (-x.get('overall_following_word_frequency', 0), x.get('original_text_index', 0)))
         # --- Token検索のロジックここまで ---
 
+   # POS検索のソート処理を修正
+# app.py の該当部分（行番号約200-250あたり）を以下に置き換え
+
     elif search_type == 'pos':
-        # --- POS検索のロジック (ユーザーの新しいソート要望に対応) ---
         target_pos_tag_query = query_input.strip().upper()
-        if not target_pos_tag_query or " " in target_pos_tag_query:
-             return jsonify({"error": "For POS search, enter a single valid tag."}), 400
+    if not target_pos_tag_query or " " in target_pos_tag_query:
+         return jsonify({"error": "For POS search, enter a single valid tag."}), 400
 
-        # 1. マッチするアイテムを全て収集し、必要な情報を付加
-        raw_results_for_pos_sort = [] 
-        for i, token in enumerate(doc_for_kwic):
-            if token.tag_ == target_pos_tag_query:
-                start_context_idx = max(0, i - backend_context_window_size)
-                end_context_idx = min(len(doc_for_kwic), i + 1 + backend_context_window_size)
-                context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
-                matched_start_in_context = i - start_context_idx
-                
-                matched_nnp_text_original = token.text
-                # マッチしたNNP自体を正規化 (小文字化、句読点除去)
-                matched_nnp_text_processed = remove_punctuation_from_token(matched_nnp_text_original).lower()
-
-                # 直後の単語(1つ目)を正規化
-                following_word_1_processed = ""
-                if i + 1 < len(doc_for_kwic):
-                    fw1_raw = doc_for_kwic[i + 1].text
-                    following_word_1_processed = remove_punctuation_from_token(fw1_raw).lower()
-                
-                raw_results_for_pos_sort.append({
-                    "context_words": context_doc_tokens,
-                    "matched_start": matched_start_in_context,
-                    "matched_end": matched_start_in_context + 1,
-                    "original_text_index": i,
-                    "matched_word_text_original": matched_nnp_text_original, # 表示用
-                    "matched_nnp_text_processed": matched_nnp_text_processed, # NNP自体の頻度計算用
-                    "following_word_1_processed": following_word_1_processed # 後続単語の頻度計算用
-                })
-        
-        if raw_results_for_pos_sort:
-            # 2. 「検索結果内」での頻度情報を計算して各アイテムに追加
-            # 2a. マッチしたNNP自体の頻度
-            nnp_texts_in_results = [item['matched_nnp_text_processed'] for item in raw_results_for_pos_sort if item['matched_nnp_text_processed']]
-            nnp_frequencies_in_results = Counter(nnp_texts_in_results)
-            for item in raw_results_for_pos_sort:
-                item['matched_nnp_freq_in_results'] = nnp_frequencies_in_results.get(item['matched_nnp_text_processed'], 0)
-
-            # 2b. 直後に続く単語(1つ目)の頻度
-            all_following_words_in_pos_results = [item['following_word_1_processed'] for item in raw_results_for_pos_sort if item['following_word_1_processed']]
-            following_word_freq_in_pos_results = Counter(all_following_words_in_pos_results)
-            for item in raw_results_for_pos_sort:
-                item['following_word_1_freq_in_results'] = following_word_freq_in_pos_results.get(item['following_word_1_processed'], 0)
+    raw_results_for_pos_sort = [] 
+    logging.info(f"--- [POS SEARCH] Collecting raw results for POS tag '{target_pos_tag_query}' ---")
+    for i, token in enumerate(doc_for_kwic):
+        if token.tag_ == target_pos_tag_query: # マッチする品詞タグ
+            start_context_idx = max(0, i - backend_context_window_size)
+            end_context_idx = min(len(doc_for_kwic), i + 1 + backend_context_window_size)
+            context_doc_tokens = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
+            matched_start_in_context = i - start_context_idx
             
-            # 3. 新しいキーでソート
-            raw_results_for_pos_sort.sort(key=lambda x: (
-                -x.get('matched_nnp_freq_in_results', 0),      # キー1: マッチしたNNP自体の頻度 (降順)
-                -x.get('following_word_1_freq_in_results', 0),# キー2: 後続単語1の頻度 (降順)
-                x.get('original_text_index', 0)                # キー3: 元の出現位置 (昇順)
-            ))
-            results = raw_results_for_pos_sort # ソートされた結果を最終結果に
-            logging.info(f"POS search (NNP) results sorted by NNP_freq_in_results, then by 1st_following_word_freq_in_results.")
-            # デバッグログ (最初の数件)
-            logging.info("--- After POS specific sort (first 5 items) ---")
-            for i_debug, item_debug in enumerate(results[:5]):
-                logging.info(f"  Item {i_debug}: NNP='{item_debug['matched_nnp_text_processed']}'(freq={item_debug['matched_nnp_freq_in_results']}), "
-                             f"NextWord='{item_debug['following_word_1_processed']}'(freq={item_debug['following_word_1_freq_in_results']}), "
-                             f"OrigIdx={item_debug['original_text_index']}")
-        else:
-            results = [] # マッチがなければ空
+            matched_word_text_original = token.text
+            matched_word_text_processed = remove_punctuation_from_token(matched_word_text_original).lower()
+            
+            following_word_1_processed = ""
+            if i + 1 < len(doc_for_kwic):
+                fw1_raw = doc_for_kwic[i + 1].text
+                following_word_1_processed = remove_punctuation_from_token(fw1_raw).lower()
+            
+            raw_results_for_pos_sort.append({
+                "context_words": context_doc_tokens,
+                "matched_start": matched_start_in_context,
+                "matched_end": matched_start_in_context + 1,
+                "original_text_index": i,
+                "matched_word_text_original": matched_word_text_original,
+                "matched_word_text_processed": matched_word_text_processed,
+                "following_word_1_processed": following_word_1_processed
+            })
+    
+    if raw_results_for_pos_sort:
+        # 1. マッチした単語の頻度を計算
+        matched_word_texts = [item['matched_word_text_processed'] for item in raw_results_for_pos_sort if item['matched_word_text_processed']]
+        matched_word_frequencies = Counter(matched_word_texts)
+        logging.info(f"--- [POS SEARCH] Frequencies of matched POS words in results: {matched_word_frequencies.most_common()} ---")
+        
+        for item in raw_results_for_pos_sort:
+            item['matched_pos_word_freq_in_results'] = matched_word_frequencies.get(item['matched_word_text_processed'], 0)
+
+        # 2. 後続単語の頻度も計算（補助的なソートキーとして使用）
+        all_following_words_in_pos_results = [item['following_word_1_processed'] for item in raw_results_for_pos_sort if item['following_word_1_processed']]
+        following_word_freq_in_pos_results = Counter(all_following_words_in_pos_results)
+        logging.info(f"--- [POS SEARCH] Frequencies of 1st following words in POS results (Top 5): {following_word_freq_in_pos_results.most_common(5)} ---")
+        
+        for item in raw_results_for_pos_sort:
+            item['following_word_1_freq_in_results'] = following_word_freq_in_pos_results.get(item['following_word_1_processed'], 0)
+        
+        # 3. ★★★ 修正されたソート処理 ★★★
+        # 頻度グループごとに処理し、同じ頻度内では出現順を保持
+        frequency_groups = {}
+        for item in raw_results_for_pos_sort:
+            freq = item.get('matched_pos_word_freq_in_results', 0)
+            if freq not in frequency_groups:
+                frequency_groups[freq] = []
+            frequency_groups[freq].append(item)
+        
+        # 各頻度グループ内を出現順でソート
+        for freq in frequency_groups:
+            frequency_groups[freq].sort(key=lambda x: x.get('original_text_index', 0))
+        
+        # 頻度の高い順にグループを結合
+        sorted_results = []
+        for freq in sorted(frequency_groups.keys(), reverse=True):
+            sorted_results.extend(frequency_groups[freq])
+        
+        results = sorted_results
+        
+        # デバッグログ（頻度別の結果表示）
+        logging.info("--- [POS SEARCH] Results grouped by frequency ---")
+        for freq in sorted(frequency_groups.keys(), reverse=True):
+            words_in_group = [item['matched_word_text_processed'] for item in frequency_groups[freq]]
+            unique_words = list(dict.fromkeys(words_in_group))  # 順序を保持しつつ重複除去
+            logging.info(f"  Frequency {freq}: {unique_words} ({len(frequency_groups[freq])} occurrences)")
+            
+        # ソート後の最初の数件を確認
+        logging.info("--- [POS SEARCH] After sorting (first 10 items) ---")
+        for i_debug, item_debug in enumerate(results[:10]):
+            logging.info(f"  Item {i_debug}: Word='{item_debug['matched_word_text_processed']}'(freq={item_debug.get('matched_pos_word_freq_in_results','N/A')}), "
+                         f"OrigIdx={item_debug['original_text_index']}")
+    else:
+        results = []
         # --- POS検索のロジックここまで ---
 
     elif search_type == 'entity':
