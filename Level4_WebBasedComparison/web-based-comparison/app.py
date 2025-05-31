@@ -279,7 +279,7 @@ def tokenize_mixed_for_authorship(text: str):
     punctuation_removed_tokens = preprocess_tokens_for_search(initial_tokens)
     lowercased_tokens = [token.lower() for token in punctuation_removed_tokens]
     return lowercased_tokens
-    
+
 def build_sentence_dataset_for_authorship(text: str, author_label: str, min_len: int = 30):
     sentences = mixed_sentence_tokenize_for_authorship(text)
     filtered = [s for s in sentences if len(s) >= min_len]
