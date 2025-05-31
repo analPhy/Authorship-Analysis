@@ -331,72 +331,103 @@ def kwic_search():
     results_with_metadata = [] # ソート用メタデータを含む一時リスト
     backend_context_window_size = 10
 
+# app.py (kwic_search 関数の search_type == 'token' 部分の修正)
+
+# ... (既存のimportや関数定義、kwic_search関数の冒頭部分は変更なし) ...
+# ... (text_content の取得、doc_for_kwic = _SPACY_NLP(text_content) の処理までは変更なし) ...
+
+    results_with_metadata = [] # ソート後の最終結果を格納するリスト
+    backend_context_window_size = 10
+
     if search_type == 'token':
-        # --- Token検索のロジック ---
+        # --- Token検索のロジック (次の単語の頻度でソート) ---
         raw_target_tokens = query_input.split()
-        target_tokens_processed_lower = [remove_punctuation_from_token(word).lower() for word in raw_target_tokens if remove_punctuation_from_token(word)]
+        target_tokens_processed_lower = [
+            token_lower for token in raw_target_tokens 
+            if (token_lower := remove_punctuation_from_token(token).lower())
+        ]
+
         if not target_tokens_processed_lower or not (1 <= len(target_tokens_processed_lower) <= 5):
-            return jsonify({"error": "Token query must be 1-5 words after punctuation removal."}), 400
+            return jsonify({"error": "Token query must be 1-5 words after punctuation removal and processing."}), 400
         
         num_target_tokens = len(target_tokens_processed_lower)
         
-        # まず全てのマッチを収集
-        temp_token_matches = []
-        for i in range(len(doc_for_kwic) - num_target_tokens + 1):
+        temp_token_matches = [] # マッチ情報とソート用メタデータを一時的に格納
+        
+        # spaCyのDocオブジェクトの長さを正しく取得するために len(doc_for_kwic) を使用
+        # マッチ候補と「次の単語」を考慮するため、ループ範囲を調整
+        for i in range(len(doc_for_kwic) - num_target_tokens): 
             candidate_doc_tokens_obj = [doc_for_kwic[j] for j in range(i, i + num_target_tokens)]
-            # spaCyトークンからテキストを取得し、句読点除去と比較
             candidate_texts_processed_lower = [
                 token_text_lower for tok_obj in candidate_doc_tokens_obj
                 if (token_text_lower := remove_punctuation_from_token(tok_obj.text).lower())
             ]
             
-            # 比較時は、処理済みトークンリストがターゲットと完全に一致するか確認
             if len(candidate_texts_processed_lower) == num_target_tokens and candidate_texts_processed_lower == target_tokens_processed_lower:
-                # マッチした実際の単語列（句読点除去・小文字化済み）を取得
-                matched_word_text_key = " ".join(candidate_texts_processed_lower)
+                # マッチ成功。次の単語を取得・処理
+                following_word_processed = "" # 次の単語がない場合のデフォルト値
+                following_token_index_in_doc = i + num_target_tokens
+                if following_token_index_in_doc < len(doc_for_kwic): # ドキュメントの範囲内か確認
+                    following_word_raw_text = doc_for_kwic[following_token_index_in_doc].text
+                    # 次の単語も句読点除去と小文字化
+                    processed_fw = remove_punctuation_from_token(following_word_raw_text).lower()
+                    if processed_fw: # 空文字列でなければ採用
+                        following_word_processed = processed_fw
                 
                 temp_token_matches.append({
-                    "original_text_index": i,
-                    "matched_word_text_key": matched_word_text_key, # ソートや頻度計算用のキー
+                    "original_text_index": i, # マッチ開始位置の元インデックス
                     "num_tokens_in_match": num_target_tokens,
+                    "following_word_processed": following_word_processed, # 処理済みの次の単語
+                    # "matched_sequence_text": " ".join(candidate_texts_processed_lower) # デバッグ用
                 })
         
         if temp_token_matches:
-            # 1. マッチしたトークンシーケンスの「全体での」出現頻度を計算
-            matched_token_sequence_frequencies = Counter(item['matched_word_text_key'] for item in temp_token_matches)
+            logging.info(f"Token search initially found {len(temp_token_matches)} matches.")
             
-            # 2. 各マッチに全体頻度と最初の出現位置を付加
-            first_occurrence_map_token = {}
-            for item in temp_token_matches:
-                key = item['matched_word_text_key']
-                item['matched_word_overall_freq'] = matched_token_sequence_frequencies[key]
-                if key not in first_occurrence_map_token:
-                    first_occurrence_map_token[key] = item['original_text_index']
-                item['matched_word_first_occurrence'] = first_occurrence_map_token[key]
+            # 1. 全てのマッチから「次の単語（処理済み）」のリストを作成し、その出現頻度を計算
+            #    次の単語が存在しない場合("")は頻度計算から除外するか、特別な値として扱う
+            all_following_words = [
+                item['following_word_processed'] for item in temp_token_matches if item['following_word_processed'] # 空でないもののみ
+            ]
+            following_word_frequencies = Counter(all_following_words)
+            logging.info(f"--- [TOKEN SEARCH] Frequencies of (non-empty) following words (Top 10): {following_word_frequencies.most_common(10)} ---")
 
-            # 3. ソート
+            # 2. 各マッチアイテムに「次の単語の頻度」情報を付加
+            for item in temp_token_matches:
+                # 次の単語が空文字列の場合は頻度0とする
+                item['following_word_freq'] = following_word_frequencies.get(item['following_word_processed'], 0) if item['following_word_processed'] else 0
+
+            # 3. ソート実行:
+            #    キー1: 次の単語の頻度 (降順)
+            #    キー2: 次の単語の文字列自体 (昇順 - 同じ頻度の場合の順序安定化)
+            #    キー3: 元のテキストでの出現位置 (昇順 - 最終的な順序安定化)
+            logging.info("--- [TOKEN SEARCH] Sorting results by 'following_word_freq' (desc), 'following_word_processed' (asc), then 'original_text_index' (asc)... ---")
             temp_token_matches.sort(key=lambda x: (
-                -x['matched_word_overall_freq'],        # 全体頻度 (降順)
-                x['matched_word_first_occurrence'],     # 最初の出現位置 (昇順)
-                x['original_text_index']                # 実際の出現位置 (昇順)
+                -x['following_word_freq'],        # 頻度で降順ソート
+                x['following_word_processed'],    # 次の単語の文字列で昇順ソート
+                x['original_text_index']          # 元の出現位置で昇順ソート
             ))
 
-            # 4. results_with_metadata にコンテキスト情報を追加して格納
+            # 4. results_with_metadata (最終結果リスト) にコンテキスト情報を追加して格納
             for match_item in temp_token_matches:
                 i = match_item['original_text_index']
-                num_tokens = match_item['num_tokens_in_match']
+                num_tokens_in_match = match_item['num_tokens_in_match']
+                
                 start_context_idx = max(0, i - backend_context_window_size)
-                end_context_idx = min(len(doc_for_kwic), i + num_tokens + backend_context_window_size)
+                end_context_idx = min(len(doc_for_kwic), i + num_tokens_in_match + backend_context_window_size)
+                
                 context_words_list = [doc_for_kwic[k].text for k in range(start_context_idx, end_context_idx)]
                 matched_start_in_context = i - start_context_idx
                 
                 results_with_metadata.append({
                     "context_words": context_words_list,
                     "matched_start": matched_start_in_context,
-                    "matched_end": matched_start_in_context + num_tokens,
-                    # ソートに使ったメタデータも必要なら含めても良いが、フロントには不要
+                    "matched_end": matched_start_in_context + num_tokens_in_match,
+                    # デバッグ用にソートに使った情報を残しても良い (フロントエンドには不要なら削除)
+                    # "debug_following_word": match_item['following_word_processed'],
+                    # "debug_following_word_freq": match_item['following_word_freq'],
+                    # "original_text_index": i
                 })
-        # --- Token検索のロジックここまで ---
 
     elif search_type == 'pos':
         target_pos_tag_query = query_input.strip().upper()
